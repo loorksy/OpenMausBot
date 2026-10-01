@@ -42,8 +42,9 @@ that later phases replace. Those modules are not mounted on the HTTP server.
 
 ## What is not implemented
 
-Market-data reads use the XAUUSD boundary in `docs/trading/market-data.md`:
-validation, provenance, freshness, and a deterministic fixture. No external
+Market-data reads use `docs/trading/market-data.md`. The XAUUSD tool
+catalog for the existing OpenMausBot tool loop is `docs/trading/agent-tools.md`.
+It can propose a decision or a non-executable order intent. No external
 feed is configured. Broker adapters, OANDA, MetaApi, MT5, simulator fills,
 paper execution, live execution, risk calculations, policy evaluation, the
 execution gate, kill-switch enforcement, reconciliation against a broker,

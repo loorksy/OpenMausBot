@@ -40,6 +40,9 @@ export const TRADING_ERROR_CODES = [
   "provider_failure",
   "future_timestamp",
   "conflicting_candles",
+  "tool_rejected",
+  "tool_unavailable",
+  "model_routing_rejected",
 ] as const;
 
 export type TradingErrorCode = (typeof TRADING_ERROR_CODES)[number];

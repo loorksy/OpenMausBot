@@ -6,6 +6,7 @@
 // readable.
 
 import type { ApprovalMode } from "../shared/approval-mode.ts";
+import type { XauUsdTurnGrant } from "./trading/agent/grant.ts";
 import type { EffortLevel } from "../shared/wire.ts";
 import type {
   DriverKind, InstanceId, ModelVariantOption, RuntimeEventListener, ThreadId, TurnId,
@@ -231,6 +232,9 @@ export interface SendTurnInput {
      * A server is either a command this machine runs (stdio) or a server
      * reached at a URL; a driver that cannot speak to one kind skips it. */
     custom?: Record<string, McpServerSpec>;
+    /** Opt-in XAUUSD tool grant for this turn. The chat tool loop mounts it
+     * beside MCP tools. Absent on ordinary chat. It cannot submit orders. */
+    xauusd?: XauUsdTurnGrant;
   };
   cwd?: string;
   /** Let the engine also load the MCP servers from the person's own CLI

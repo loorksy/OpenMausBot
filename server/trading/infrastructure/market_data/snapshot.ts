@@ -70,6 +70,11 @@ export function createXauUsdMarketSnapshot(input: {
     environment: snapshot.environment,
     instrument: "XAUUSD",
     actor: snapshot.provider,
+    ...(request.runtime ? {
+      runtimeEventId: request.runtime.eventId,
+      runtimeThreadId: request.runtime.threadId,
+      runtimeTurnId: request.runtime.turnId,
+    } : {}),
     payload: {
       snapshotId: snapshot.id,
       provenance: snapshot.provenance,

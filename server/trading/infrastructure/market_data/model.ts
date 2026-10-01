@@ -19,6 +19,12 @@ export interface MarketRequest {
   readonly correlationId: string;
   readonly versionManifestId: string;
   readonly clock: MarketClock;
+  /** Harness ids copied onto trading events. Absent for a direct fixture read. */
+  readonly runtime?: {
+    readonly eventId: string;
+    readonly threadId: string;
+    readonly turnId: string;
+  };
   nextEventId(): string;
 }
 

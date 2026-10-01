@@ -1,5 +1,6 @@
-/** Phase 1 contracts and the Phase 2 XAUUSD market-data boundary.
- * Not wired into the harness HTTP server. This package does not submit orders. */
+/** Phase 1 contracts, the Phase 2 market-data boundary, and the Phase 3
+ * XAUUSD tool catalog. The catalog is mounted by the existing chat tool
+ * loop when a turn carries an opt-in grant. This package does not submit orders. */
 
 export * from "./domain/index.ts";
 export { foundationControl } from "./control/boundaries.ts";
@@ -33,3 +34,10 @@ export type {
   XauUsdMarketDataProvider,
   XauUsdQuote,
 } from "./infrastructure/market_data/index.ts";
+export {
+  FORBIDDEN_EXECUTION_TOOL_NAMES,
+  XAUUSD_TOOL_CATALOG_VERSION,
+  createXauUsdToolSession,
+  selectTradingModel,
+} from "./agent/index.ts";
+export type { XauUsdToolSession, XauUsdTurnGrant } from "./agent/index.ts";
