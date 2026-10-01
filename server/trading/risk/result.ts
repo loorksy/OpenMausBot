@@ -61,6 +61,7 @@ export interface RiskTrace {
   readonly riskPerLot: number | null;
   readonly requestedQuantity: number | null;
   readonly calculatedMaximumQuantity: number | null;
+  readonly maximumAllowedQuantity: number | null;
   readonly acceptedQuantity: number | null;
   readonly rejectedQuantity: number | null;
   readonly resultingRiskAmount: number | null;

@@ -87,9 +87,14 @@ accepted = floor(quantity / step) × step
 
 The monetary risk is recalculated after the floor. The accepted quantity is
 reduced by further steps if that risk would still exceed the sizing budget.
-A requested quantity is not rounded. If it is off-step, the result is
-`QUANTITY_STEP_INVALID`. If its risk exceeds the budget, the result is
-`RISK_BUDGET_EXCEEDED`. The request is left unchanged.
+A requested quantity is not rounded and it is not reduced. If it is
+off-step, the result is `QUANTITY_STEP_INVALID`. If its risk exceeds the
+budget, the result is `RISK_BUDGET_EXCEEDED`. If it exceeds
+`maxPositionQuantity`, or a manage/exit request exceeds the known open
+lots, the result is `POSITION_SIZE_EXCEEDED`. The trace keeps
+`requestedQuantity` and may show `maximumAllowedQuantity`. It does not
+replace the request with that smaller size. An accepted request is the
+requested quantity.
 
 ## Stops, entries, and targets
 

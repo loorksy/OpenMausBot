@@ -304,6 +304,89 @@ describe("risk engine", () => {
     expect(left.id).toBe(right.id);
   });
 
+  it("floors a derived quantity and rejects a requested quantity that breaks a hard limit", () => {
+    const derived = riskOf({
+      account: account({ equity: 13_700 }),
+      riskConfig: riskConfig({ quantityStep: 0.01 }),
+    });
+    expect(derived.state).toBe("ACCEPT");
+    expect(derived.trace.requestedQuantity).toBeNull();
+    expect(derived.trace.calculatedMaximumQuantity).toBe(0.137);
+    expect(derived.trace.acceptedQuantity).toBe(0.13);
+    expect(derived.trace.roundingMode).toBe("floor");
+    expect(derived.trace.resultingRiskAmount).toBe(130);
+    expect(derived.trace.resultingRiskAmount ?? 0).toBeLessThanOrEqual(derived.trace.riskBudget ?? 0);
+
+    const overBudget = 0.2;
+    const budgetReject = riskOf({ requestedQuantity: overBudget });
+    expect(budgetReject.state).toBe("REJECT");
+    expect(budgetReject.reasons).toEqual(["RISK_BUDGET_EXCEEDED"]);
+    expect(budgetReject.trace.requestedQuantity).toBe(overBudget);
+    expect(budgetReject.trace.acceptedQuantity).toBeNull();
+    expect(overBudget).toBe(0.2);
+
+    const overMax = 2;
+    const positionReject = riskOf({
+      account: account({ equity: 1_000_000 }),
+      riskConfig: riskConfig({ maxPositionQuantity: 1 }),
+      requestedQuantity: overMax,
+    });
+    expect(positionReject.state).toBe("REJECT");
+    expect(positionReject.reasons).toEqual(["POSITION_SIZE_EXCEEDED"]);
+    expect(positionReject.trace.requestedQuantity).toBe(2);
+    expect(positionReject.trace.maximumAllowedQuantity).toBe(1);
+    expect(positionReject.trace.acceptedQuantity).toBeNull();
+    expect(overMax).toBe(2);
+
+    const openLots = account({
+      equity: 1_000_000,
+      exposureSide: "long",
+      exposureLots: 1,
+      openRiskAmount: 0,
+    });
+    for (const direction of ["MANAGE_EXISTING_POSITION", "EXIT_EXISTING_POSITION"] as const) {
+      const requestedExit = 2;
+      const exitReject = riskOf({
+        account: openLots,
+        decision: decision(direction, 1990, []),
+        orderIntent: intent(direction, 2000, 1990, []),
+        requestedQuantity: requestedExit,
+      });
+      expect(exitReject.state).toBe("REJECT");
+      expect(exitReject.reasons).toEqual(["POSITION_SIZE_EXCEEDED"]);
+      expect(exitReject.trace.requestedQuantity).toBe(2);
+      expect(exitReject.trace.maximumAllowedQuantity).toBe(1);
+      expect(exitReject.trace.acceptedQuantity).toBeNull();
+      expect(requestedExit).toBe(2);
+      expect(openLots.exposureLots).toBe(1);
+    }
+
+    const kept = riskOf({
+      account: openLots,
+      decision: decision("EXIT_EXISTING_POSITION", 1990, []),
+      orderIntent: intent("EXIT_EXISTING_POSITION", 2000, 1990, []),
+      requestedQuantity: 1,
+    });
+    expect(kept.state).toBe("ACCEPT");
+    expect(kept.trace.acceptedQuantity).toBe(1);
+    expect(kept.trace.requestedQuantity).toBe(1);
+
+    for (const requested of [0.05, 0.1, 1, 2]) {
+      const result = riskOf({
+        account: account({ equity: 1_000_000 }),
+        riskConfig: riskConfig({ maxPositionQuantity: 1 }),
+        requestedQuantity: requested,
+      });
+      if (result.state === "ACCEPT") {
+        expect(result.trace.acceptedQuantity).toBe(requested);
+      } else {
+        expect(result.state).toBe("REJECT");
+        expect(result.trace.acceptedQuantity).toBeNull();
+        expect(result.trace.requestedQuantity).toBe(requested);
+      }
+    }
+  });
+
   it("keeps an accepted assessment inside the budget with a positive quantity and a valid stop", () => {
     for (const equity of [1_000, 10_000, 250_000]) {
       for (const distance of [1, 10, 25]) {

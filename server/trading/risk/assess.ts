@@ -252,6 +252,8 @@ function sizeProposal(
   next.calculatedMaximumQuantity = unscale(maxFromBudget);
   const ceiling = positionCeiling(config, account, decision.direction);
   if (ceiling === "blocked") return { state: "BLOCKED", reason: "UNKNOWN_EXISTING_EXPOSURE", trace: next };
+  const allowed = maximumAllowed(maxFromBudget, config, ceiling);
+  next.maximumAllowedQuantity = unscale(allowed);
   if (requested === null) {
     return deriveQuantity(config, budget.sizingScaled, budget.equityScaled, maxFromBudget, perLotScaled, ceiling, next);
   }
@@ -352,20 +354,35 @@ function riskBudget(
   return { done: null, equityScaled: equity, sizingScaled: sizing, riskBudget: unscale(equity) };
 }
 
+type QuantityCeiling = {
+  readonly kind: "open-lots" | "exposure";
+  readonly lots: bigint;
+};
+
 function positionCeiling(
   config: RiskConfig,
   account: AccountRiskState,
   direction: Decision["direction"],
-): bigint | null | "blocked" {
+): QuantityCeiling | null | "blocked" {
   if (direction === "MANAGE_EXISTING_POSITION" || direction === "EXIT_EXISTING_POSITION") {
     if (account.exposureLots === null) return "blocked";
-    return scale(account.exposureLots);
+    return { kind: "open-lots", lots: scale(account.exposureLots) };
   }
   if (config.maxOpenExposure === null) return null;
   if (account.exposureSide === "unknown") return "blocked";
   const existing = account.exposureLots === null ? 0n : scale(account.exposureLots);
   const room = scale(config.maxOpenExposure) - existing;
-  return room > 0n ? room : 0n;
+  return { kind: "exposure", lots: room > 0n ? room : 0n };
+}
+
+function maximumAllowed(maxFromBudget: bigint, config: RiskConfig, ceiling: QuantityCeiling | null): bigint {
+  let allowed = maxFromBudget;
+  if (config.maxPositionQuantity !== null) {
+    const cap = scale(config.maxPositionQuantity);
+    if (cap < allowed) allowed = cap;
+  }
+  if (ceiling !== null && ceiling.lots < allowed) allowed = ceiling.lots;
+  return allowed > 0n ? allowed : 0n;
 }
 
 function deriveQuantity(
@@ -374,18 +391,18 @@ function deriveQuantity(
   equityScaled: bigint,
   maxFromBudget: bigint,
   perLotScaled: bigint,
-  ceiling: bigint | null,
+  ceiling: QuantityCeiling | null,
   trace: Draft,
 ): Sized {
   let quantity = maxFromBudget;
-  let limitedBy: "budget" | "position" | "exposure" = "budget";
+  let limitedBy: "budget" | "position" | "open-lots" | "exposure" = "budget";
   if (config.maxPositionQuantity !== null && quantity > scale(config.maxPositionQuantity)) {
     quantity = scale(config.maxPositionQuantity);
     limitedBy = "position";
   }
-  if (ceiling !== null && quantity > ceiling) {
-    quantity = ceiling;
-    limitedBy = "exposure";
+  if (ceiling !== null && quantity > ceiling.lots) {
+    quantity = ceiling.lots;
+    limitedBy = ceiling.kind;
   }
   const rounding = config.quantityStep === null ? "none" : "floor";
   if (config.quantityStep !== null) quantity = floorToStep(quantity, scale(config.quantityStep));
@@ -394,7 +411,7 @@ function deriveQuantity(
   if (stepped <= 0n) {
     const reason = limitedBy === "exposure"
       ? "EXPOSURE_LIMIT_EXCEEDED"
-      : limitedBy === "position"
+      : limitedBy === "position" || limitedBy === "open-lots"
         ? "POSITION_SIZE_EXCEEDED"
         : "RISK_BUDGET_EXCEEDED";
     return { state: "REJECT", reason, trace: next };
@@ -412,7 +429,7 @@ function validateRequested(
   equityScaled: bigint,
   requested: number,
   perLotScaled: bigint,
-  ceiling: bigint | null,
+  ceiling: QuantityCeiling | null,
   trace: Draft,
 ): Sized {
   const requestedScaled = scale(requested);
@@ -431,8 +448,9 @@ function validateRequested(
   if (config.maxPositionQuantity !== null && requestedScaled > scale(config.maxPositionQuantity)) {
     return { state: "REJECT", reason: "POSITION_SIZE_EXCEEDED", trace: next };
   }
-  if (ceiling !== null && requestedScaled > ceiling) {
-    return { state: "REJECT", reason: "EXPOSURE_LIMIT_EXCEEDED", trace: next };
+  if (ceiling !== null && requestedScaled > ceiling.lots) {
+    const reason = ceiling.kind === "open-lots" ? "POSITION_SIZE_EXCEEDED" : "EXPOSURE_LIMIT_EXCEEDED";
+    return { state: "REJECT", reason, trace: next };
   }
   const resulting = (requestedScaled * perLotScaled) / scale(1);
   next.resultingRiskAmount = unscale(resulting);
@@ -451,6 +469,13 @@ function acceptQuantity(quantity: bigint, perLotScaled: bigint, equityScaled: bi
     resultingRiskPercent: trace.equity === null ? null : unscale((resulting * scale(1)) / scale(trace.equity)),
   };
   if (quantity <= 0n) return { state: "REJECT", reason: "QUANTITY_INVALID", trace: next };
+  if (trace.requestedQuantity !== null && quantity !== scale(trace.requestedQuantity)) {
+    return {
+      state: "REJECT",
+      reason: "POSITION_SIZE_EXCEEDED",
+      trace: { ...next, acceptedQuantity: null, rejectedQuantity: trace.requestedQuantity },
+    };
+  }
   if (resulting > equityScaled) return { state: "REJECT", reason: "RISK_BUDGET_EXCEEDED", trace: next };
   return { state: "ACCEPT", reason: "RISK_WITHIN_LIMITS", trace: next };
 }
@@ -478,6 +503,7 @@ function blankTrace(configVersion: string | null): Draft {
     riskPerLot: null,
     requestedQuantity: null,
     calculatedMaximumQuantity: null,
+    maximumAllowedQuantity: null,
     acceptedQuantity: null,
     rejectedQuantity: null,
     resultingRiskAmount: null,
