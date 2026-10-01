@@ -9,6 +9,9 @@ export const XAUUSD_TOOL_CATALOG_VERSION = "xauusd-tools-2";
 export const FORBIDDEN_EXECUTION_TOOL_NAMES = [
   "place_order",
   "submit_order",
+  "execute_trade",
+  "metaapi_execute",
+  "mt5_order",
   "close_position",
   "modify_order",
   "cancel_order",

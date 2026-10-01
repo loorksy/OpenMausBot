@@ -47,11 +47,12 @@ submit. It does not mean an order exists. This phase never returns
                     └─────────────────────┘
 ```
 
-The future broker adapter is intentionally absent. `foundationControl.submitToBroker`,
+The gate does not call a broker. `foundationControl.submitToBroker`,
 `foundationControl.runExecutionGate`, and `foundationControl.reconcile`
-still throw. The gate does not call them. It also does not call
+still throw when called with no inputs. The gate also does not call
 `assessXauUsdRisk` or `assessXauUsdPolicy`. Composition stays outside the
-gate: risk, then policy, then approval, then this check.
+gate: risk, then policy, then approval, then this check, then the Phase 8
+execution boundary in `docs/trading/execution.md`.
 
 ```mermaid
 flowchart TD

@@ -1,10 +1,11 @@
 /** Phase 1 contracts, the Phase 2 market-data boundary, the Phase 3 XAUUSD
  * tool catalog, the Phase 4 replay clock, the Phase 5 evaluation foundation,
- * the Phase 6 risk and policy engines, and the Phase 7 approval engine and
- * fire-time gate. The catalog is mounted by the existing chat tool loop when
- * a turn carries an opt-in grant. Replay changes market time and market data
- * only. Evaluation records that same tool session. Nothing here submits an
- * order. */
+ * the Phase 6 risk and policy engines, the Phase 7 approval engine and
+ * fire-time gate, and the Phase 8 MetaApi execution boundary. The catalog is
+ * mounted by the existing chat tool loop when a turn carries an opt-in grant.
+ * Replay changes market time and market data only. Evaluation records that
+ * same tool session. The model has no execution tool. A broker submit happens
+ * only through the execution boundary after ELIGIBLE_FOR_EXECUTION. */
 
 export * from "./domain/index.ts";
 export { foundationControl } from "./control/boundaries.ts";
@@ -104,3 +105,19 @@ export {
   gateInfrastructureFact,
 } from "./gate/index.ts";
 export type { GateConfig, GateDecision, GateState } from "./gate/index.ts";
+export {
+  EXECUTION_ENGINE_VERSION,
+  createMemoryExecutionLedger,
+  createMetaApiExecutionAdapter,
+  executionInfrastructureFact,
+  parseMetaApiAccountBinding,
+  submitAuthorizedExecution,
+  translateMetaApiTradeResponse,
+} from "./execution/index.ts";
+export type {
+  ExecutionAttemptRecord,
+  ExecutionDecision,
+  ExecutionState,
+  MetaApiAccountBinding,
+  XauUsdExecutionProvider,
+} from "./execution/index.ts";
