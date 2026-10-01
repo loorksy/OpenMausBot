@@ -161,4 +161,5 @@ It does not repair a proposal. It does not set `executable` or
 `brokerSubmit` to true. It does not place, modify, or cancel an order. It
 does not compute P&L, fills, or a strategy. A field such as `riskApproved`
 on the input is ignored. Credentials are rejected and are not copied into
-the decision.
+the decision. The fire-time gate rechecks this result and does not
+recompute a quantity. See `docs/trading/execution-gate.md`.

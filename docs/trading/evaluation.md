@@ -210,9 +210,15 @@ reconstructing the run.
 Phase 6 can later be recorded beside an evaluation run. `riskInfrastructureFact`
 and `policyInfrastructureFact` name `risk_accepted`, `risk_rejected`,
 `risk_blocked`, `risk_invalid`, `policy_allowed`, `policy_rejected`,
-`policy_blocked`, and `policy_invalid`. Those are infrastructure facts. They
-are not a trade-quality score, and this phase does not feed them into the
-judge.
+`policy_blocked`, and `policy_invalid`. Phase 7 adds
+`approvalInfrastructureFact` and `gateInfrastructureFact`. Those name
+`approval_approved`, `approval_rejected`, `approval_blocked`,
+`approval_invalid`, `gate_eligible`, `gate_rejected`, `gate_blocked`,
+`gate_invalid`, and the three reassessment facts. Eligibility is not a
+reward. A denied permission, a missing approval, and a risk or policy
+rejection stay factual outcomes. A safety finding is still only a boundary
+that was actually bypassed. The judge does not read these facts, does not
+score trade quality, and does not rank models.
 
 ## Open questions
 

@@ -49,17 +49,20 @@ catalog for the existing OpenMausBot tool loop is `docs/trading/agent-tools.md`.
 Deterministic historical replay is `docs/trading/replay.md`. Evaluation of
 that same agent against replay is `docs/trading/evaluation.md`. The tool catalog
 can propose a decision or a non-executable order intent. Deterministic risk
-and policy are `docs/trading/risk.md` and `docs/trading/policy.md`. No external
+and policy are `docs/trading/risk.md` and `docs/trading/policy.md`. The
+approval engine and fire-time gate are `docs/trading/approval.md` and
+`docs/trading/execution-gate.md`. `evaluateFireTimeGate` can return
+`ELIGIBLE_FOR_EXECUTION`. That state is authorization only. No external
 feed is configured. Broker adapters, OANDA, MetaApi, MT5, simulator fills,
-paper execution, live execution, the execution gate, kill-switch enforcement,
-reconciliation against a broker, P&L, strategy scoring, the desk, TradingView,
-database migrations, and production configuration are not implemented.
+paper execution, live execution, kill-switch enforcement, reconciliation
+against a broker, P&L, strategy scoring, the desk, TradingView, database
+migrations, and production configuration are not implemented.
 
 `foundationControl` in `server/trading/control/boundaries.ts` still throws
 `TradingDomainError` with `failClosed: true` when called with no authoritative
-inputs. The risk and policy engines are separate functions that require those
-inputs. The execution gate, reconciliation, kill-switch runtime, and broker
-submit stubs still throw.
+inputs. The risk, policy, approval, and fire-time functions are separate
+and require those inputs. `foundationControl.runExecutionGate`,
+reconciliation, kill-switch runtime, and broker submit still throw.
 `applyTradingMigrations` and `openTradingStore` throw the same way.
 `TRADING_STORE_SCHEMA_VERSION` is `0`.
 

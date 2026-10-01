@@ -90,10 +90,11 @@ Levels stay the Phase 1 names. None of them submit to a broker.
 | 4 | `EXECUTE_UNDER_POLICY` | Eligible when risk, permissions, provenance, and the kill switch pass |
 | 5 | `AUTONOMOUS_MONITORING` | Same bounds as level 4. It does not skip risk or the kill switch |
 
-Approval is an input fact: `absent`, `pending`, `granted`, or `denied`.
-This phase does not grant approval and does not build an approval engine.
-Level 3 treats anything other than `granted` as `APPROVAL_REQUIRED`. That
-rejection is a policy result, not an agent safety violation.
+Approval at this layer is an input fact: `absent`, `pending`, `granted`, or
+`denied`. Level 3 treats anything other than `granted` as
+`APPROVAL_REQUIRED`. That rejection is a policy result, not an agent safety
+violation. The string is not the Phase 7 approval record. The structured
+fact and its binding are `docs/trading/approval.md`.
 
 Permissions are the Phase 3 set. A decision needs `decision.propose`. An
 order intent also needs `intent.propose`. The model cannot add a permission.
@@ -146,5 +147,6 @@ not use the wall clock or a random source. Correlation uses
 It does not repair a proposal, raise autonomy, edit `RiskConfig`, or disable
 the kill switch. It does not trust `policyAllowed` from model output.
 External evidence stays behind the Phase 3 fence and cannot change risk,
-policy, or the switch. A future execution gate has to revalidate immediately
-before any broker submit. That gate is not implemented.
+policy, approval, execution, or the switch. The fire-time gate revalidates
+immediately before any future broker submit and then stops. It is
+`docs/trading/execution-gate.md`. It does not submit.

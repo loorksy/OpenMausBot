@@ -1,9 +1,10 @@
 /** Phase 1 contracts, the Phase 2 market-data boundary, the Phase 3 XAUUSD
  * tool catalog, the Phase 4 replay clock, the Phase 5 evaluation foundation,
- * and the Phase 6 risk and policy engines. The catalog is mounted by the
- * existing chat tool loop when a turn carries an opt-in grant. Replay changes
- * market time and market data only. Evaluation records that same tool session.
- * Risk and policy do not submit orders. */
+ * the Phase 6 risk and policy engines, and the Phase 7 approval engine and
+ * fire-time gate. The catalog is mounted by the existing chat tool loop when
+ * a turn carries an opt-in grant. Replay changes market time and market data
+ * only. Evaluation records that same tool session. Nothing here submits an
+ * order. */
 
 export * from "./domain/index.ts";
 export { foundationControl } from "./control/boundaries.ts";
@@ -88,3 +89,18 @@ export {
 export type { PolicyConfig, PolicyDecision, PolicyState } from "./policy/index.ts";
 export { evaluateXauUsdProposal, PROPOSAL_ENGINE_VERSION } from "./proposal/index.ts";
 export type { ProposalEvaluation, ProposalOutcome } from "./proposal/index.ts";
+export {
+  assessApproval,
+  parseApprovalConfig,
+  APPROVAL_ENGINE_VERSION,
+  approvalInfrastructureFact,
+  proposalBinding,
+} from "./approval/index.ts";
+export type { ApprovalConfig, ApprovalDecision, ApprovalState } from "./approval/index.ts";
+export {
+  evaluateFireTimeGate,
+  parseGateConfig,
+  GATE_ENGINE_VERSION,
+  gateInfrastructureFact,
+} from "./gate/index.ts";
+export type { GateConfig, GateDecision, GateState } from "./gate/index.ts";
