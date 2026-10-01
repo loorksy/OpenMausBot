@@ -20,6 +20,7 @@ import type { PolicyDecision } from "../policy/result.ts";
 import type { RiskDecision } from "../risk/result.ts";
 import { parseMetaApiAccountBinding, type MetaApiAccountBinding } from "./binding.ts";
 import { pendingAction, type BrokerOrderCommand } from "./command.ts";
+import { executionAttemptKey } from "./identity.ts";
 import type { ExecutionAttemptRecord, ExecutionLedger } from "./ledger.ts";
 import type { XauUsdExecutionProvider } from "./provider.ts";
 import {
@@ -69,6 +70,10 @@ interface Ready {
   readonly stop: number;
   readonly takeProfit: number | null;
   readonly quantity: number;
+  readonly requestedQuantity: number | null;
+  readonly targets: readonly number[];
+  readonly proposalBinding: string;
+  readonly gateState: string;
   readonly identity: string;
   readonly requestId: string;
   readonly command: BrokerOrderCommand;
@@ -79,7 +84,13 @@ interface Ready {
 export async function submitAuthorizedExecution(input: ExecutionSubmitInput): Promise<ExecutionDecision> {
   try {
     assertNoSecretFields(input, "execution input");
-    return seal(await decide(input));
+    const decision = await decide(input);
+    try {
+      input.ledger.appendEvents?.(decision.events);
+    } catch {
+      // The attempt row is the durable fact. An event write must not retry the broker.
+    }
+    return seal(decision);
   } catch (error) {
     const reason = error instanceof TradingDomainError && error.code === "credentials_forbidden"
       ? "CREDENTIALS_FORBIDDEN"
@@ -121,7 +132,7 @@ async function decide(input: ExecutionSubmitInput): Promise<ExecutionDecision> {
     }).slice(0, 40)}`;
     return finish(input, ready.ready, "NOT_SUBMITTED", reason, false, prior.brokerRequestId, null, null, duplicateId);
   }
-  const pending = attemptRecord(input, ready.ready, "SUBMISSION_UNKNOWN", null, null);
+  const pending = attemptRecord(input, ready.ready, "SUBMISSION_UNKNOWN", null, null, null);
   if (!input.ledger.reserve(pending)) {
     return finish(input, ready.ready, "NOT_SUBMITTED", "RECONCILIATION_REQUIRED", false, null, null, null);
   }
@@ -129,7 +140,7 @@ async function decide(input: ExecutionSubmitInput): Promise<ExecutionDecision> {
   try {
     broker = await input.provider.submit(ready.ready.command);
   } catch {
-    input.ledger.complete(attemptRecord(input, ready.ready, "SUBMISSION_UNKNOWN", null, null));
+    persistOutcome(input, ready.ready, "SUBMISSION_UNKNOWN", null, null, null);
     return finish(input, ready.ready, "SUBMISSION_UNKNOWN", "BROKER_UNKNOWN", true, null, null, null);
   }
   return settle(input, ready.ready, broker);
@@ -140,17 +151,64 @@ function settle(
   ready: Ready,
   broker: Awaited<ReturnType<XauUsdExecutionProvider["submit"]>>,
 ): ExecutionDecision {
+  const outcome = classify(ready, broker);
+  if (!persistOutcome(input, ready, outcome.state, outcome.brokerRequestId, outcome.brokerCode, outcome.fill)) {
+    return finish(
+      input,
+      ready,
+      "SUBMISSION_UNKNOWN",
+      "SYSTEM_ERROR",
+      outcome.brokerCalled,
+      outcome.brokerRequestId,
+      outcome.brokerCode,
+      null,
+    );
+  }
+  return finish(
+    input,
+    ready,
+    outcome.state,
+    outcome.reason,
+    outcome.brokerCalled,
+    outcome.brokerRequestId,
+    outcome.brokerCode,
+    outcome.fill,
+  );
+}
+
+function classify(
+  ready: Ready,
+  broker: Awaited<ReturnType<XauUsdExecutionProvider["submit"]>>,
+): {
+  state: ExecutionState;
+  reason: ExecutionReason;
+  brokerCalled: boolean;
+  brokerRequestId: string | null;
+  brokerCode: string | null;
+  fill: ExecutionFill | null;
+} {
   if (broker.kind === "credentials_missing") {
-    input.ledger.complete(attemptRecord(input, ready, "NOT_SUBMITTED", null, null));
-    return finish(input, ready, "NOT_SUBMITTED", "CREDENTIALS_MISSING", false, null, null, null);
+    return { state: "NOT_SUBMITTED", reason: "CREDENTIALS_MISSING", brokerCalled: false, brokerRequestId: null, brokerCode: null, fill: null };
   }
   if (broker.kind === "unknown") {
-    input.ledger.complete(attemptRecord(input, ready, "SUBMISSION_UNKNOWN", broker.brokerRequestId, null));
-    return finish(input, ready, "SUBMISSION_UNKNOWN", "BROKER_UNKNOWN", true, broker.brokerRequestId, broker.brokerCode, null);
+    return {
+      state: "SUBMISSION_UNKNOWN",
+      reason: "BROKER_UNKNOWN",
+      brokerCalled: true,
+      brokerRequestId: broker.brokerRequestId,
+      brokerCode: broker.brokerCode,
+      fill: null,
+    };
   }
   if (broker.kind === "rejected") {
-    input.ledger.complete(attemptRecord(input, ready, "SUBMISSION_REJECTED", broker.brokerRequestId, null));
-    return finish(input, ready, "SUBMISSION_REJECTED", "BROKER_REJECTED", true, broker.brokerRequestId, broker.brokerCode, null);
+    return {
+      state: "SUBMISSION_REJECTED",
+      reason: "BROKER_REJECTED",
+      brokerCalled: true,
+      brokerRequestId: broker.brokerRequestId,
+      brokerCode: broker.brokerCode,
+      fill: null,
+    };
   }
   if (broker.kind === "filled") {
     if (
@@ -159,15 +217,47 @@ function settle(
       || broker.brokerFillId === null
       || broker.brokerRequestId === null
     ) {
-      input.ledger.complete(attemptRecord(input, ready, "SUBMISSION_UNKNOWN", broker.brokerRequestId, null));
-      return finish(input, ready, "SUBMISSION_UNKNOWN", "BROKER_TERMS_MISMATCH", true, broker.brokerRequestId, broker.brokerCode, null);
+      return {
+        state: "SUBMISSION_UNKNOWN",
+        reason: "BROKER_TERMS_MISMATCH",
+        brokerCalled: true,
+        brokerRequestId: broker.brokerRequestId,
+        brokerCode: broker.brokerCode,
+        fill: null,
+      };
     }
-    const fill = { brokerFillId: broker.brokerFillId, price: broker.fillPrice, volume: broker.fillVolume };
-    input.ledger.complete(attemptRecord(input, ready, "FILL_REPORTED", broker.brokerRequestId, fill));
-    return finish(input, ready, "FILL_REPORTED", "FILL_EXPLICIT", true, broker.brokerRequestId, broker.brokerCode, fill);
+    return {
+      state: "FILL_REPORTED",
+      reason: "FILL_EXPLICIT",
+      brokerCalled: true,
+      brokerRequestId: broker.brokerRequestId,
+      brokerCode: broker.brokerCode,
+      fill: { brokerFillId: broker.brokerFillId, price: broker.fillPrice, volume: broker.fillVolume },
+    };
   }
-  input.ledger.complete(attemptRecord(input, ready, "SUBMISSION_ACCEPTED", broker.brokerRequestId, null));
-  return finish(input, ready, "SUBMISSION_ACCEPTED", "ACKNOWLEDGED", true, broker.brokerRequestId, broker.brokerCode, null);
+  return {
+    state: "SUBMISSION_ACCEPTED",
+    reason: "ACKNOWLEDGED",
+    brokerCalled: true,
+    brokerRequestId: broker.brokerRequestId,
+    brokerCode: broker.brokerCode,
+    fill: null,
+  };
+}
+
+function persistOutcome(
+  input: ExecutionSubmitInput,
+  ready: Ready,
+  state: ExecutionState,
+  brokerRequestId: string | null,
+  brokerCode: string | null,
+  fill: ExecutionFill | null,
+): boolean {
+  try {
+    return input.ledger.complete(attemptRecord(input, ready, state, brokerRequestId, brokerCode, fill));
+  } catch {
+    return false;
+  }
 }
 
 function authorize(input: ExecutionSubmitInput): { ok: true; ready: Ready } | { ok: false; reason: ExecutionReason } {
@@ -208,6 +298,10 @@ function authorize(input: ExecutionSubmitInput): { ok: true; ready: Ready } | { 
       stop: proposal.stop,
       takeProfit: proposal.takeProfit,
       quantity: proposal.quantity,
+      requestedQuantity: input.requestedQuantity,
+      targets: proposal.targets,
+      proposalBinding: proposal.proposalBinding,
+      gateState: input.gate.state,
       identity,
       requestId,
       command: {
@@ -230,7 +324,16 @@ function matchProposal(
   input: ExecutionSubmitInput,
   environment: TradingEnvironment,
   provenance: ProvenanceStatus,
-): { ok: true; direction: "LONG" | "SHORT"; entry: number; stop: number; takeProfit: number | null; quantity: number } | { ok: false; reason: ExecutionReason } {
+): {
+  ok: true;
+  direction: "LONG" | "SHORT";
+  entry: number;
+  stop: number;
+  takeProfit: number | null;
+  quantity: number;
+  targets: readonly number[];
+  proposalBinding: string;
+} | { ok: false; reason: ExecutionReason } {
   const decision = input.decision;
   const intent = input.orderIntent;
   const risk = input.risk;
@@ -308,6 +411,8 @@ function matchProposal(
     stop: intent.stop,
     takeProfit: intent.targets.length === 1 ? intent.targets[0] ?? null : null,
     quantity: risk.trace.acceptedQuantity,
+    targets: intent.targets,
+    proposalBinding: binding,
   };
 }
 
@@ -353,12 +458,21 @@ function attemptRecord(
   ready: Ready,
   state: ExecutionState,
   brokerRequestId: string | null,
+  brokerCode: string | null,
   fill: ExecutionFill | null,
 ): ExecutionAttemptRecord {
+  const sequence = 1;
   return {
     schemaVersion: EXECUTION_ENGINE_VERSION,
+    executionAttemptId: executionAttemptKey({
+      executionIdentity: ready.identity,
+      executionRequestId: ready.requestId,
+      sequence,
+      state,
+    }),
     executionRequestId: ready.requestId,
     executionIdentity: ready.identity,
+    sequence,
     agentRunId: input.agentRunId,
     decisionId: input.decision?.id ?? "",
     orderIntentId: input.orderIntent?.id ?? "",
@@ -366,19 +480,30 @@ function attemptRecord(
     policyDecisionId: input.policy.id,
     approvalDecisionId: input.approval.id,
     gateId: input.gate.id,
+    gateState: ready.gateState,
     bindingId: ready.binding.bindingId,
+    proposalBinding: ready.proposalBinding,
     environment: ready.environment,
     provenance: ready.provenance,
     direction: ready.direction,
     entry: ready.entry,
     stop: ready.stop,
     takeProfit: ready.takeProfit,
+    targets: ready.targets,
+    requestedQuantity: ready.requestedQuantity,
     quantity: ready.quantity,
+    clientId: ready.command.clientId,
     state,
     brokerRequestId,
+    brokerCode: safeBrokerCode(brokerCode),
     fill,
     submittedAt: input.submittedAt,
+    responseAt: null,
   };
+}
+
+function safeBrokerCode(value: string | null): string | null {
+  return value !== null && /^[A-Z0-9_]{1,64}$/.test(value) ? value : null;
 }
 
 function located(input: ExecutionSubmitInput): Ready | null {
@@ -402,6 +527,10 @@ function located(input: ExecutionSubmitInput): Ready | null {
     stop: input.orderIntent?.stop ?? 0,
     takeProfit: null,
     quantity: input.risk.trace.acceptedQuantity ?? 0,
+    requestedQuantity: input.requestedQuantity,
+    targets: input.orderIntent?.targets ?? [],
+    proposalBinding: "",
+    gateState: input.gate.state,
     identity: "",
     requestId: "",
     command: {

@@ -78,8 +78,9 @@ decision.
 
 The configuration is sealed when it is created. Starting the same run object
 again throws `evaluation_rejected`. The in-memory archive throws if the same
-`evaluationRunId` is stored twice. `openTradingStore` is still unimplemented.
-`TRADING_STORE_SCHEMA_VERSION` remains `0`.
+`evaluationRunId` is stored twice. The evaluation archive is still in memory.
+It does not write the trading ledger. The ledger's schema version is `1`
+when opened with an explicit path.
 
 ## Status
 

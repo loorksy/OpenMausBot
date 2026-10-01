@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { TradingDomainError, type TradingErrorCode } from "./errors.ts";
 
-/** Contract generation. Persistence schema is separate and still unapplied. */
+/** Contract generation. The trading-store schema version is separate. */
 export const TRADING_SCHEMA_VERSION = 1 as const;
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;

@@ -56,18 +56,22 @@ approval engine and fire-time gate are `docs/trading/approval.md` and
 Cloud execution boundary is `docs/trading/execution.md`. It submits only
 that authorization, and only through an injected transport. No external
 feed is configured. OANDA, a local MetaTrader 5 terminal, simulator fills,
-kill-switch enforcement, reconciliation against a broker, P&L, strategy
-scoring, the desk, TradingView, database migrations, and production
-configuration are not implemented.
+kill-switch enforcement, P&L, strategy scoring, the desk, TradingView, and
+production configuration are not implemented. Reconciliation against a
+captured broker snapshot is `docs/trading/reconciliation.md`.
 
 `foundationControl` in `server/trading/control/boundaries.ts` still throws
 `TradingDomainError` with `failClosed: true` when called with no authoritative
 inputs. The risk, policy, approval, and fire-time functions are separate
 and require those inputs. `submitAuthorizedExecution` is the execution
 boundary and requires the same kind of explicit inputs. `foundationControl.runExecutionGate`,
-reconciliation, kill-switch runtime, and `foundationControl.submitToBroker`
-still throw.
-`applyTradingMigrations` and `openTradingStore` throw the same way.
-`TRADING_STORE_SCHEMA_VERSION` is `0`.
+`foundationControl.reconcile`, kill-switch runtime, and `foundationControl.submitToBroker`
+still throw. `reconcileExecution` is the pure comparison and does not replace
+that stub.
+`applyTradingMigrations()` and `openTradingStore()` with no arguments throw
+the same way, so a call cannot create a hidden default database.
+`TRADING_STORE_SCHEMA_VERSION` is `1`. An explicit path and environment open
+a `node:sqlite` file and migrate it. Version `0` means the file had no
+trading schema; the migration creates tables and does not delete rows.
 
 No broker credentials are read or stored.

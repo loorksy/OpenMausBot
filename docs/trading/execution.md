@@ -134,10 +134,26 @@ An engaged, missing, malformed, or wrong-environment switch prevents the
 provider call. The adapter cannot clear the switch. Phase 1 still has only
 `engaged`.
 
+## Persistence
+
+The in-memory ledger is still available for a single process. A restarted
+process does not inherit it. Durable duplicate protection uses
+`openTradingStore({ path, environment })`. The store commits the execution
+identity and a `SUBMISSION_UNKNOWN` attempt before `provider.submit` is
+called. The outcome is a new attempt row. The reserved row is not rewritten.
+
+`openTradingStore()` with no arguments still throws. The call has to name
+a file and an environment. PAPER and LIVE do not share a file.
+
+If the reservation cannot be written, MetaApi is not called. If MetaApi
+returns and the outcome row cannot be written, the decision stays
+`SUBMISSION_UNKNOWN` and the reservation still blocks another submit.
+That is not a retry. Acknowledgement is still not account truth.
+`docs/trading/reconciliation.md` compares the ledger with a broker snapshot.
+
 ## What this phase does not do
 
-It does not reconcile the account, maintain a broker ledger, schedule a
-session, add a tool the model can call, or draw a chart. The in-memory
-ledger is the duplicate-protection hook. `openTradingStore` still throws,
-so a restarted process does not inherit that ledger. Acknowledgement is
-not account truth.
+It does not schedule a session, add a tool the model can call, or draw a
+chart. It does not claim that the database and MetaApi commit together.
+A crash after the broker call and before the outcome row leaves the
+reservation `SUBMISSION_UNKNOWN`.

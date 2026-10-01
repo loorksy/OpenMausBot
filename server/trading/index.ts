@@ -1,11 +1,13 @@
 /** Phase 1 contracts, the Phase 2 market-data boundary, the Phase 3 XAUUSD
  * tool catalog, the Phase 4 replay clock, the Phase 5 evaluation foundation,
  * the Phase 6 risk and policy engines, the Phase 7 approval engine and
- * fire-time gate, and the Phase 8 MetaApi execution boundary. The catalog is
- * mounted by the existing chat tool loop when a turn carries an opt-in grant.
- * Replay changes market time and market data only. Evaluation records that
- * same tool session. The model has no execution tool. A broker submit happens
- * only through the execution boundary after ELIGIBLE_FOR_EXECUTION. */
+ * fire-time gate, the Phase 8 MetaApi execution boundary, and the Phase 9
+ * trading ledger and reconciliation. The catalog is mounted by the existing
+ * chat tool loop when a turn carries an opt-in grant. Replay changes market
+ * time and market data only. Evaluation records that same tool session. The
+ * model has no execution tool. A broker submit happens only through the
+ * execution boundary after ELIGIBLE_FOR_EXECUTION. Reconciliation reads a
+ * broker snapshot and does not submit. */
 
 export * from "./domain/index.ts";
 export { foundationControl } from "./control/boundaries.ts";
@@ -121,3 +123,16 @@ export type {
   MetaApiAccountBinding,
   XauUsdExecutionProvider,
 } from "./execution/index.ts";
+export {
+  RECONCILIATION_CONFIG_VERSION,
+  RECONCILIATION_ENGINE_VERSION,
+  buildBrokerSnapshot,
+  captureBrokerSnapshot,
+  createMetaApiReconciliationAdapter,
+  reconcileExecution,
+} from "./reconciliation/index.ts";
+export type {
+  BrokerAccountSnapshot,
+  MetaApiReconciliationReader,
+  ReconciliationResult,
+} from "./reconciliation/index.ts";
