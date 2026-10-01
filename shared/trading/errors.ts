@@ -35,6 +35,11 @@ export const TRADING_ERROR_CODES = [
   "kill_switch_runtime_not_implemented",
   "broker_adapter_not_implemented",
   "trading_store_not_implemented",
+  "market_data_rejected",
+  "unsupported_timeframe",
+  "provider_failure",
+  "future_timestamp",
+  "conflicting_candles",
 ] as const;
 
 export type TradingErrorCode = (typeof TRADING_ERROR_CODES)[number];

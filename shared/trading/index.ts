@@ -44,8 +44,8 @@ export type { ImmutableIdentity } from "./immutable.ts";
 export { EVIDENCE_KINDS, parseEvidence } from "./evidence.ts";
 export type { Evidence, EvidenceKind } from "./evidence.ts";
 
-export { XAUUSD_TIMEFRAMES, parseMarketSnapshot } from "./snapshot.ts";
-export type { MarketSnapshot, XauUsdCandle, XauUsdTimeframe } from "./snapshot.ts";
+export { MARKET_FRESHNESS_STATES, XAUUSD_TIMEFRAMES, parseMarketSnapshot } from "./snapshot.ts";
+export type { MarketFreshness, MarketSnapshot, XauUsdCandle, XauUsdTimeframe } from "./snapshot.ts";
 
 export { parseXauUsdContext } from "./context.ts";
 export type { XauUsdContext } from "./context.ts";

@@ -42,7 +42,9 @@ that later phases replace. Those modules are not mounted on the HTTP server.
 
 ## What is not implemented
 
-Market-data providers, broker adapters, OANDA, MetaApi, MT5, simulator fills,
+Market-data reads use the XAUUSD boundary in `docs/trading/market-data.md`:
+validation, provenance, freshness, and a deterministic fixture. No external
+feed is configured. Broker adapters, OANDA, MetaApi, MT5, simulator fills,
 paper execution, live execution, risk calculations, policy evaluation, the
 execution gate, kill-switch enforcement, reconciliation against a broker,
 replay, backtesting, evaluation, the model router, specialist orchestration,

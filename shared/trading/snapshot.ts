@@ -9,6 +9,11 @@ export const XAUUSD_TIMEFRAMES = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"] as
 
 export type XauUsdTimeframe = (typeof XAUUSD_TIMEFRAMES)[number];
 
+/** Data-quality label. This is not an execution permission. */
+export const MARKET_FRESHNESS_STATES = ["fresh", "stale", "unavailable", "invalid", "future_dated"] as const;
+
+export type MarketFreshness = (typeof MARKET_FRESHNESS_STATES)[number];
+
 /** One bar inside an immutable snapshot. Validation checks the bar shape.
  * It does not compute indicators. */
 export interface XauUsdCandle {
@@ -35,6 +40,10 @@ export interface MarketSnapshot {
   readonly receivedAt: string;
   readonly provenance: ProvenanceStatus;
   readonly latencyMs?: number;
+  readonly processedAt?: string;
+  readonly freshness?: MarketFreshness;
+  readonly versionManifestId?: string;
+  readonly normalizations: readonly string[];
   readonly bid?: number;
   readonly ask?: number;
   readonly spread?: number;
@@ -74,6 +83,10 @@ const snapshotSchema = z.object({
   receivedAt: utcTimestampSchema,
   provenance: provenanceStatusSchema,
   latencyMs: z.number().finite().nonnegative().optional(),
+  processedAt: utcTimestampSchema.optional(),
+  freshness: z.enum(MARKET_FRESHNESS_STATES).optional(),
+  versionManifestId: recordIdSchema.optional(),
+  normalizations: z.array(z.string().trim().min(1).max(200)).max(40).default([]),
   bid: price.optional(),
   ask: price.optional(),
   spread: z.number().finite().nonnegative().optional(),
@@ -82,6 +95,19 @@ const snapshotSchema = z.object({
   if (snapshot.bid !== undefined && snapshot.ask !== undefined && snapshot.bid > snapshot.ask) {
     ctx.addIssue({ code: "custom", path: ["bid"], message: "bid cannot exceed ask" });
   }
+  const lastByTimeframe = new Map<string, number>();
+  snapshot.candles.forEach((candle, index) => {
+    const timeMs = Date.parse(candle.time);
+    const previous = lastByTimeframe.get(candle.timeframe);
+    if (previous !== undefined && timeMs <= previous) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["candles", index, "time"],
+        message: "candles in one timeframe must be strictly increasing and unique",
+      });
+    }
+    lastByTimeframe.set(candle.timeframe, timeMs);
+  });
 });
 
 export function parseMarketSnapshot(value: unknown): MarketSnapshot {
