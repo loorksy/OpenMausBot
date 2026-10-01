@@ -11,6 +11,7 @@ import type { ExecutionAttemptRecord, ExecutionLedger } from "../execution/ledge
 import type { ReconciliationResult } from "../reconciliation/engine.ts";
 import type { BrokerAccountSnapshot } from "../reconciliation/snapshot.ts";
 import { canonicalJson } from "../replay/hash.ts";
+import { createJobRepository, type JobRepository } from "./jobs.ts";
 import { createDurableExecutionLedger, insertEvent, readAttempts } from "./ledger.ts";
 import type { PersistedExecutionRequest } from "./record.ts";
 import { TRADING_STORE_SCHEMA_SQL } from "./schema.ts";
@@ -18,7 +19,10 @@ import { TRADING_STORE_SCHEMA_SQL } from "./schema.ts";
 /** First durable trading schema. Version 0 had no tables. Opening still
  * requires an explicit path and environment; a zero-argument call does not
  * create a database. */
-export const TRADING_STORE_SCHEMA_VERSION = 1 as const;
+/** Phase 9 ledger is version 1. Phase 10 adds job tables as version 2. */
+export const TRADING_STORE_SCHEMA_VERSION = 2 as const;
+
+const TRADING_STORE_SCHEMA_VERSIONS = [0, 1, TRADING_STORE_SCHEMA_VERSION] as const;
 
 export interface OpenTradingStoreInput {
   readonly path: string;
@@ -41,6 +45,7 @@ export interface TradingStore {
   saveReconciliation(result: ReconciliationResult): { readonly inserted: boolean };
   readReconciliations(identity: string): readonly ReconciliationResult[];
   countFindings(reconciliationRunId: string): number;
+  readonly jobs: JobRepository;
   close(): void;
 }
 
@@ -148,7 +153,7 @@ function migrate(db: DatabaseSync, environment: TradingEnvironment): void {
       db.exec("COMMIT");
       return;
     }
-    if (row.version !== 0 && row.version !== TRADING_STORE_SCHEMA_VERSION) {
+    if (!(TRADING_STORE_SCHEMA_VERSIONS as readonly number[]).includes(row.version)) {
       throw new TradingDomainError("trading_store_rejected", "Trading store schema version is not supported. Failing closed.");
     }
     if (row.environment !== "" && row.environment !== environment) {
@@ -177,6 +182,7 @@ function migrate(db: DatabaseSync, environment: TradingEnvironment): void {
 
 function store(db: DatabaseSync, path: string, environment: TradingEnvironment): TradingStore {
   const ledger = createDurableExecutionLedger(db, environment);
+  const jobs = createJobRepository(db, environment);
   return {
     schemaVersion: TRADING_STORE_SCHEMA_VERSION,
     environment,
@@ -399,6 +405,7 @@ function store(db: DatabaseSync, path: string, environment: TradingEnvironment):
         reconciliationRunId,
       );
     },
+    jobs,
     close() {
       db.close();
     },

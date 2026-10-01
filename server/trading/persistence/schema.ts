@@ -124,4 +124,25 @@ CREATE TABLE IF NOT EXISTS reconciliation_findings (
   broker_volume TEXT,
   PRIMARY KEY (reconciliation_run_id, finding_index)
 );
+CREATE TABLE IF NOT EXISTS xauusd_jobs (
+  revision_id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  UNIQUE (job_id, sequence)
+);
+CREATE INDEX IF NOT EXISTS xauusd_jobs_identity ON xauusd_jobs(job_id, sequence);
+CREATE TABLE IF NOT EXISTS xauusd_job_wakes (
+  wake_id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL,
+  scheduled_for TEXT NOT NULL,
+  status TEXT NOT NULL,
+  agent_run_id TEXT NOT NULL,
+  runtime_thread_id TEXT NOT NULL,
+  runtime_turn_id TEXT,
+  payload_json TEXT NOT NULL,
+  UNIQUE (job_id, scheduled_for)
+);
 `;

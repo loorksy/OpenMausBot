@@ -170,5 +170,6 @@ stop, target, quantity, direction, symbol, environment, or account. It does
 not clear the kill switch. It does not create an approval or a fire-time
 authorization. A `DESYNCED` result is a record for a later operator policy.
 
-A future monitor can call the same pure function on new snapshots. That
-monitor is not this phase. Phase 10 is not started.
+A later monitor can call the same pure function on new snapshots. That
+monitor does not repair an order. Long-running orchestration is
+`docs/trading/long-running-agent.md`.

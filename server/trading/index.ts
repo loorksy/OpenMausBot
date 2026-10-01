@@ -136,3 +136,17 @@ export type {
   MetaApiReconciliationReader,
   ReconciliationResult,
 } from "./reconciliation/index.ts";
+export {
+  XAUUSD_JOB_DEFAULT_INTERVAL_MINUTES,
+  XAUUSD_JOB_MAX_DURATION_MS,
+  XAUUSD_JOB_VERSION,
+  authorizeJobExecution,
+  cancelJob,
+  dispatchDueJobs,
+  holdForApproval,
+  interpretMonitoringRequest,
+  noteReconciliation,
+  pauseJob,
+  rememberJob,
+} from "./jobs/index.ts";
+export type { XauUsdJob, XauUsdJobStatus, XauUsdTurnRequest } from "./jobs/index.ts";

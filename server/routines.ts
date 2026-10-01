@@ -322,6 +322,9 @@ export interface RoutineManagerOptions {
   /** A successful provider turn is intermediate while its peer work or
    * queued continuation still belongs to this detached execution. */
   hasPendingDelegations?: (threadId: string) => boolean;
+  /** Same clock as this tick. Callers may dispatch their own durable work.
+   * This does not start another timer. */
+  onClock?: (now: number) => Promise<void> | void;
 }
 
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
@@ -690,7 +693,7 @@ export function nextOccurrence(schedule: RoutineSchedule, after: number): number
   return null;
 }
 
-function latestIntervalOccurrence(
+export function latestIntervalOccurrence(
   schedule: RoutineIntervalSchedule,
   at: number,
 ): number | null {
@@ -1634,6 +1637,9 @@ export class RoutineManager {
           this.failThread(task.threadId, error instanceof Error ? error.message : String(error));
         }
       }
+      // Await only when a listener exists. An empty tick must stay synchronous
+      // so start()'s first tick finishes before the caller continues.
+      if (this.options.onClock) await this.options.onClock(now);
     } finally {
       this.ticking = false;
     }
