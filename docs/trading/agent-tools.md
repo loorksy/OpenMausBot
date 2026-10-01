@@ -93,6 +93,10 @@ unavailable and the policy has no approved available fallback, session open
 throws `model_routing_rejected`. A selected model still has
 `executionAuthority: false`.
 
+Evaluation drives this same mounted session at a replay time. See
+`docs/trading/evaluation.md`. It does not add a tool, a second tool loop, or
+an execution path.
+
 ## What this phase does not implement
 
 Broker adapters, credentials, order submission, fills, position mutation,

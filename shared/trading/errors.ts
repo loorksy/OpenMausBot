@@ -44,6 +44,7 @@ export const TRADING_ERROR_CODES = [
   "tool_unavailable",
   "model_routing_rejected",
   "replay_rejected",
+  "evaluation_rejected",
 ] as const;
 
 export type TradingErrorCode = (typeof TRADING_ERROR_CODES)[number];

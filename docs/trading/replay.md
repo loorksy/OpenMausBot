@@ -208,4 +208,6 @@ order intent created from a replay observation stays non-executable.
 P&L, fills, spread or slippage models, commissions, position accounting,
 strategy scoring, optimization, walk-forward, and model benchmarking. Risk,
 policy, the execution gate, reconciliation, and the kill switch are still
-unimplemented boundaries.
+unimplemented boundaries. Phase 5 evaluation
+(`docs/trading/evaluation.md`) runs the existing tool session against this
+replay and records what it did. It does not score a strategy or compute P&L.

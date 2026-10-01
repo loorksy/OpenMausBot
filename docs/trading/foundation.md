@@ -45,13 +45,14 @@ that later phases replace. Those modules are not mounted on the HTTP server.
 
 Market-data reads use `docs/trading/market-data.md`. The XAUUSD tool
 catalog for the existing OpenMausBot tool loop is `docs/trading/agent-tools.md`.
-Deterministic historical replay is `docs/trading/replay.md`. The tool catalog
+Deterministic historical replay is `docs/trading/replay.md`. Evaluation of
+that same agent against replay is `docs/trading/evaluation.md`. The tool catalog
 can propose a decision or a non-executable order intent. No external feed is
 configured. Broker adapters, OANDA, MetaApi, MT5, simulator fills, paper
 execution, live execution, risk calculations, policy evaluation, the
 execution gate, kill-switch enforcement, reconciliation against a broker,
-backtesting, evaluation, the model router, specialist orchestration, the
-desk, TradingView, database migrations, and production configuration.
+P&L, strategy scoring, the desk, TradingView, database migrations, and
+production configuration are not implemented.
 
 `foundationControl` in `server/trading/control/boundaries.ts` throws
 `TradingDomainError` with `failClosed: true` for each of those engines.

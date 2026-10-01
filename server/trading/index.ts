@@ -1,7 +1,9 @@
 /** Phase 1 contracts, the Phase 2 market-data boundary, the Phase 3 XAUUSD
- * tool catalog, and the Phase 4 replay clock. The catalog is mounted by the
- * existing chat tool loop when a turn carries an opt-in grant. Replay changes
- * market time and market data only. This package does not submit orders. */
+ * tool catalog, the Phase 4 replay clock, and the Phase 5 evaluation
+ * foundation. The catalog is mounted by the existing chat tool loop when a
+ * turn carries an opt-in grant. Replay changes market time and market data
+ * only. Evaluation records that same tool session. This package does not
+ * submit orders. */
 
 export * from "./domain/index.ts";
 export { foundationControl } from "./control/boundaries.ts";
@@ -52,3 +54,19 @@ export {
   createReplaySession,
 } from "./replay/index.ts";
 export type { MarketObservation, ReplayDataset, ReplaySession } from "./replay/index.ts";
+export {
+  EVALUATION_RULES_VERSION,
+  assessRecordedCalls,
+  compareEvaluationRuns,
+  createEvaluationArchive,
+  createEvaluationConfiguration,
+  createEvaluationRun,
+  executeEvaluationRun,
+} from "./evaluation/index.ts";
+export type {
+  EvaluationConfiguration,
+  EvaluationPlayer,
+  EvaluationResult,
+  EvaluationRun,
+  EvaluationStatus,
+} from "./evaluation/index.ts";

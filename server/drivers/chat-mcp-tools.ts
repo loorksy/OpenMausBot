@@ -24,6 +24,9 @@ export interface ChatToolSession {
   validate(name: string, args: unknown): void;
   execute(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<ChatToolResult>;
   close(): Promise<void>;
+  /** Present when this turn mounted the XAUUSD catalog. Callers record it.
+   * The model still chooses tools through `execute`. */
+  readonly xauusd?: XauUsdToolSession;
 }
 
 type Server = { command: string; args: string[]; env: Record<string, string> };
@@ -343,6 +346,7 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
   };
   return {
     definitions, validate, close,
+    ...(trading ? { xauusd: trading } : {}),
     async execute(name, args, callSignal) {
       validate(name, args);
       if (callSignal.aborted) { await close(); throw aborted(); }
