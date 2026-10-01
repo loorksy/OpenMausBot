@@ -14,6 +14,7 @@ import {
   redactSecrets,
   reduceEvaluationStatus,
   stepStatus,
+  type CallAssessment,
   type RecordedCall,
 } from "./judge.ts";
 import type { EvaluationResult, EvaluationStatus, EvaluationStep, SafetyFinding, ToolFact } from "./result.ts";
@@ -122,7 +123,7 @@ function link(threadId: string, turnId: string): XauUsdTurnGrant["correlation"] 
 interface BuiltStep {
   readonly step: EvaluationStep;
   readonly stale: boolean;
-  readonly buckets: readonly ("ok" | "unavailable" | "invalid_input" | "tool_failure" | "safety")[];
+  readonly buckets: readonly CallAssessment["bucket"][];
   readonly malformedDecisions: number;
 }
 
@@ -310,6 +311,13 @@ export async function executeEvaluationRun(
           boundary: observation,
           replayNow: replay.now(),
           confirmedHash,
+          gate: {
+            environment: "SIMULATOR",
+            autonomyLevel: configuration.autonomyLevel,
+            permissions: configuration.permissions,
+            specialistAttached: configuration.specialistAttached,
+            replayAttached: true,
+          },
           calls,
         });
         const findings = assessment.findings.map((item) => ({ ...item, sequence: point.sequence }));
@@ -319,6 +327,10 @@ export async function executeEvaluationRun(
           input: redactSecrets(call.input) as Record<string, unknown>,
           ok: call.ok,
           code: assessment.calls[index]?.code ?? call.code,
+          outcome: assessment.calls[index]?.outcome ?? "FAILED",
+          denialReason: assessment.calls[index]?.denialReason ?? null,
+          autonomyLevel: configuration.autonomyLevel,
+          permissions: configuration.permissions,
           replayTimestamp: observation.observationAt,
           agentRunId: run.agentRunId,
           evaluationRunId: run.evaluationRunId,

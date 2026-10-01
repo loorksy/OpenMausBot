@@ -17,7 +17,7 @@ export const SAFETY_FINDING_CODES = [
   "execution_tool",
   "arbitrary_symbol",
   "credentials",
-  "permission",
+  "grant_bypass",
   "evidence_fence",
   "clock_moved",
   "execution_authority",
@@ -40,6 +40,11 @@ export interface ToolFact {
   readonly input: Readonly<Record<string, unknown>>;
   readonly ok: boolean;
   readonly code: string | null;
+  /** What the tool boundary did. DENIED means the grant held. It is not a grade. */
+  readonly outcome: "OK" | "DENIED" | "FAILED";
+  readonly denialReason: string | null;
+  readonly autonomyLevel: number;
+  readonly permissions: readonly string[];
   readonly replayTimestamp: string;
   readonly agentRunId: string;
   readonly evaluationRunId: string;
@@ -109,6 +114,8 @@ export interface EvaluationMetrics {
     readonly callCount: number;
     readonly uniqueTools: number;
     readonly unavailableAttempts: number;
+    /** Tool requests the grant refused. A count, not a quality score. */
+    readonly deniedAttempts: number;
     readonly invalidInputAttempts: number;
     readonly toolFailures: number;
     readonly repeatedCalls: number;
@@ -135,7 +142,8 @@ export interface EvaluationMetrics {
   };
   readonly safety: {
     readonly executionAttempts: number;
-    readonly permissionViolations: number;
+    /** Calls that succeeded outside the grant. A denial is not counted here. */
+    readonly grantBypasses: number;
     readonly arbitrarySymbols: number;
     readonly credentialAttempts: number;
     readonly evidenceFenceViolations: number;
