@@ -1,5 +1,5 @@
 import { TradingDomainError } from "../../../../shared/trading/errors.ts";
-import { assertProvenanceForEnvironment, type ProvenanceStatus, type TradingEnvironment } from "../../../../shared/trading/environment.ts";
+import { assertProvenanceForEnvironment, PROVENANCE_STATUSES, type ProvenanceStatus, type TradingEnvironment } from "../../../../shared/trading/environment.ts";
 import { XAUUSD_INSTRUMENT } from "../../../../shared/trading/instrument.ts";
 import type { MarketFreshness } from "../../../../shared/trading/snapshot.ts";
 import type { XauUsdCandle, XauUsdTimeframe } from "../../../../shared/trading/snapshot.ts";
@@ -50,6 +50,8 @@ export function resolveSuccessProvenance(
   if (reported === "UNAVAILABLE") {
     throw new TradingDomainError("provider_failure", "a success payload cannot be UNAVAILABLE");
   }
+  // Only LIVE is relabeled when the caller clock says the payload is stale.
+  // REPLAY stays REPLAY so historical data is not rewritten as STALE or LIVE.
   if (reported === "LIVE" && freshness === "stale") {
     return {
       provenance: "STALE",
@@ -57,6 +59,10 @@ export function resolveSuccessProvenance(
     };
   }
   return { provenance: reported, normalizations: [] };
+}
+
+function isProvenance(value: unknown): value is ProvenanceStatus {
+  return typeof value === "string" && (PROVENANCE_STATUSES as readonly string[]).includes(value);
 }
 
 export function validateQuote(input: {
@@ -88,7 +94,7 @@ export function validateQuote(input: {
   if (clock.futureDated) {
     throw new TradingDomainError("future_timestamp", "provider timestamp is in the future");
   }
-  if (input.provenance !== "LIVE" && input.provenance !== "STALE" && input.provenance !== "SIMULATOR" && input.provenance !== "UNAVAILABLE") {
+  if (!isProvenance(input.provenance)) {
     throw new TradingDomainError("market_data_rejected", "provenance is missing");
   }
   const resolved = resolveSuccessProvenance(input.environment, input.declaredProvenance, input.provenance, clock.freshness);
@@ -158,7 +164,7 @@ export function validateCandles(input: {
   if (clock.futureDated) {
     throw new TradingDomainError("future_timestamp", "provider response timestamp is in the future");
   }
-  if (input.provenance !== "LIVE" && input.provenance !== "STALE" && input.provenance !== "SIMULATOR" && input.provenance !== "UNAVAILABLE") {
+  if (!isProvenance(input.provenance)) {
     throw new TradingDomainError("market_data_rejected", "provenance is missing");
   }
   const resolved = resolveSuccessProvenance(input.environment, input.declaredProvenance, input.provenance, clock.freshness);

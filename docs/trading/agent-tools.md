@@ -19,13 +19,14 @@ market-data provider. `approvalMode` (`ask`, `edits`, `auto`, `full`,
 
 ## Catalog
 
-Version `xauusd-tools-1`.
+Version `xauusd-tools-2`.
 
 Advertised only when the gate allows them:
 
 - `list_xauusd_tools`
 - `get_xauusd_quote`
 - `get_xauusd_candles`
+- `get_xauusd_observation` when the grant is bound to a replay session with `market.read`
 - `propose_decision` from autonomy `RECOMMEND` (level 2) with `decision.propose`
 - `propose_order_intent` from the same level with `intent.propose`
 - `consult_specialist` when the turn attached an `askSpecialist` callback and the grant has `specialist.consult`
@@ -55,9 +56,12 @@ and the runtime event id for that call. The session also emits `item.started`
 and `item.completed` (`ok: false` when the call fails). The harness has no
 `item.failed` type.
 
-A successful market read seals a snapshot of that read only. The model picks
-which snapshot a decision cites. The server does not merge reads or require a
-fixed sequence.
+A successful quote or candle read still seals a snapshot of that read only.
+`get_xauusd_observation` seals one additional snapshot of the closed bars and
+quote that are knowable at the current replay time. Forming bars stay off
+that candle array. The model picks which snapshot a decision cites. The
+server does not require a fixed sequence, and replay time is not a model
+tool: nothing in the catalog advances the clock.
 
 ## Evidence
 

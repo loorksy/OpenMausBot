@@ -12,14 +12,15 @@ export const tradingEnvironmentSchema = z.enum(TRADING_ENVIRONMENTS, {
   error: "environment must be SIMULATOR, PAPER, or LIVE",
 });
 
-/** Market-data provenance. SIMULATOR is an explicit environment status, never
- * a fallback for a failed live feed. */
-export const PROVENANCE_STATUSES = ["LIVE", "STALE", "SIMULATOR", "UNAVAILABLE"] as const;
+/** Market-data provenance. SIMULATOR is synthetic data. REPLAY is historical
+ * market time and is valid only in the SIMULATOR slot. Neither is a fallback
+ * for a failed live feed, and REPLAY is never labeled LIVE. */
+export const PROVENANCE_STATUSES = ["LIVE", "STALE", "SIMULATOR", "UNAVAILABLE", "REPLAY"] as const;
 
 export type ProvenanceStatus = (typeof PROVENANCE_STATUSES)[number];
 
 export const provenanceStatusSchema = z.enum(PROVENANCE_STATUSES, {
-  error: "provenance must be LIVE, STALE, SIMULATOR, or UNAVAILABLE",
+  error: "provenance must be LIVE, STALE, SIMULATOR, UNAVAILABLE, or REPLAY",
 });
 
 export type CredentialSlot = "none" | "paper" | "live";
@@ -52,7 +53,7 @@ export function parseTradingEnvironment(value: unknown): TradingEnvironment {
 export function parseProvenanceStatus(value: unknown): ProvenanceStatus {
   const parsed = provenanceStatusSchema.safeParse(value);
   if (!parsed.success) {
-    throw new TradingDomainError("invalid_snapshot", "provenance must be LIVE, STALE, SIMULATOR, or UNAVAILABLE");
+    throw new TradingDomainError("invalid_snapshot", "provenance must be LIVE, STALE, SIMULATOR, UNAVAILABLE, or REPLAY");
   }
   return parsed.data;
 }
@@ -72,6 +73,12 @@ export function assertProvenanceForEnvironment(
     throw new TradingDomainError(
       "silent_simulator_fallback",
       "SIMULATOR cannot be labeled LIVE",
+    );
+  }
+  if (provenance === "REPLAY" && environment !== "SIMULATOR") {
+    throw new TradingDomainError(
+      "environment_isolation",
+      "REPLAY provenance is only valid in the SIMULATOR environment",
     );
   }
 }

@@ -17,7 +17,8 @@ that later phases replace. Those modules are not mounted on the HTTP server.
   move from one to another. Credential slots are `none`, `paper`, and `live`.
   Bindings keep `liveExecutionEnabled` and `brokerNetworkEnabled` false.
 - `SIMULATOR` provenance cannot be used by `PAPER` or `LIVE`. `SIMULATOR`
-  cannot be labeled `LIVE`.
+  cannot be labeled `LIVE`. `REPLAY` provenance is historical market time and
+  is valid only in `SIMULATOR`. It is not `LIVE` and not a live-feed fallback.
 - Decisions may be `LONG`, `SHORT`, `NO_TRADE`, `WAIT`,
   `MANAGE_EXISTING_POSITION`, or `EXIT_EXISTING_POSITION`.
 - Evidence is `trust: "external"` and `untrusted: true`.
@@ -44,12 +45,13 @@ that later phases replace. Those modules are not mounted on the HTTP server.
 
 Market-data reads use `docs/trading/market-data.md`. The XAUUSD tool
 catalog for the existing OpenMausBot tool loop is `docs/trading/agent-tools.md`.
-It can propose a decision or a non-executable order intent. No external
-feed is configured. Broker adapters, OANDA, MetaApi, MT5, simulator fills,
-paper execution, live execution, risk calculations, policy evaluation, the
+Deterministic historical replay is `docs/trading/replay.md`. The tool catalog
+can propose a decision or a non-executable order intent. No external feed is
+configured. Broker adapters, OANDA, MetaApi, MT5, simulator fills, paper
+execution, live execution, risk calculations, policy evaluation, the
 execution gate, kill-switch enforcement, reconciliation against a broker,
-replay, backtesting, evaluation, the model router, specialist orchestration,
-the desk, TradingView, database migrations, and production configuration.
+backtesting, evaluation, the model router, specialist orchestration, the
+desk, TradingView, database migrations, and production configuration.
 
 `foundationControl` in `server/trading/control/boundaries.ts` throws
 `TradingDomainError` with `failClosed: true` for each of those engines.

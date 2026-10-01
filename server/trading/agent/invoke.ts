@@ -54,7 +54,7 @@ function marketRequest(state: XauUsdSessionState, runtimeEventId: string): Marke
     agentRunId: state.grant.agentRunId,
     correlationId: state.grant.correlation.runtimeTurnId,
     versionManifestId: state.manifest.id,
-    clock: state.clock,
+    clock: state.now(),
     runtime: {
       eventId: runtimeEventId,
       threadId: state.grant.correlation.runtimeThreadId,
@@ -75,7 +75,7 @@ function tradingEvent(
     eventId: state.grant.correlation.nextTradingEventId(),
     type,
     source: "trading-domain",
-    at: state.clock.processedAt,
+    at: state.now().processedAt,
     agentRunId: state.grant.agentRunId,
     correlationId: state.grant.correlation.runtimeTurnId,
     environment: state.grant.environment,
@@ -99,7 +99,7 @@ function runtimeItem(
     provider: state.grant.modelProvider,
     threadId: state.grant.correlation.runtimeThreadId,
     turnId: state.grant.correlation.runtimeTurnId,
-    createdAt: state.clock.processedAt,
+    createdAt: state.now().processedAt,
     itemId: eventId,
   };
   if (!outcome) {
@@ -306,7 +306,7 @@ async function proposeDecision(state: XauUsdSessionState, args: Record<string, u
     agentRunId: state.grant.agentRunId,
     environment: state.grant.environment,
     instrument: "XAUUSD",
-    createdAt: state.clock.processedAt,
+    createdAt: state.now().processedAt,
     status: "DRAFT",
     thesis: args.thesis,
     contextId: context.id,
@@ -364,7 +364,7 @@ async function proposeIntent(state: XauUsdSessionState, args: Record<string, unk
     environment: state.grant.environment,
     instrument: "XAUUSD",
     decisionId: decision.id,
-    createdAt: state.clock.processedAt,
+    createdAt: state.now().processedAt,
     direction: args.direction,
     executable: false,
     brokerSubmit: false,
@@ -406,8 +406,8 @@ async function consult(state: XauUsdSessionState, args: Record<string, unknown>)
     environment: state.grant.environment,
     kind: "tool_output",
     excerpt: reply.text,
-    receivedAt: state.clock.receivedAt,
-    createdAt: state.clock.processedAt,
+    receivedAt: state.now().receivedAt,
+    createdAt: state.now().processedAt,
     provider: "specialist",
   });
   state.evidence.set(fenced.evidence.id, fenced.evidence);
@@ -419,6 +419,93 @@ async function consult(state: XauUsdSessionState, args: Record<string, unknown>)
       agentRunId: state.grant.agentRunId,
       evidence: fenced.evidence,
       fence: fenced.fence,
+    },
+  };
+}
+
+async function readObservation(
+  state: XauUsdSessionState,
+): Promise<{ body: Record<string, unknown>; events: TradingEvent[] }> {
+  const replay = state.grant.replay;
+  if (!replay) throw new TradingDomainError("tool_unavailable", "replay observation is not attached");
+  const before = replay.events.length;
+  const observation = await replay.observe({
+    versionManifestId: state.manifest.id,
+    runtimeEventId: state.activeRuntimeEventId,
+  });
+  let contextId: string | undefined;
+  if (observation.snapshot) {
+    const context = buildXauUsdMarketContext(observation.snapshot, {
+      id: `ctx-${observation.contentHash}`,
+      session: observation.replaySessionId,
+    });
+    state.snapshots.set(observation.snapshot.id, observation.snapshot);
+    state.contexts.set(context.id, context);
+    contextId = context.id;
+  }
+  const quote = observation.quote;
+  return {
+    events: replay.events.slice(before),
+    body: {
+      ok: true,
+      tool: "get_xauusd_observation",
+      instrument: "XAUUSD",
+      agentRunId: state.grant.agentRunId,
+      environment: state.grant.environment,
+      provenance: observation.provenance,
+      observationAt: observation.observationAt,
+      quality: observation.quality,
+      qualityReasons: [...observation.qualityReasons],
+      replaySessionId: observation.replaySessionId,
+      datasetId: observation.datasetId,
+      datasetVersion: observation.datasetVersion,
+      datasetFingerprint: observation.datasetFingerprint,
+      configVersion: observation.configVersion,
+      clockVersion: observation.clockVersion,
+      formingPolicy: observation.formingPolicy,
+      observationId: observation.id,
+      contentHash: observation.contentHash,
+      ...(observation.snapshot ? {
+        snapshotId: observation.snapshot.id,
+        freshness: observation.snapshot.freshness,
+      } : {}),
+      ...(contextId ? { contextId } : {}),
+      ...(quote ? {
+        quote: {
+          bid: quote.bid,
+          ask: quote.ask,
+          spread: quote.spread,
+          providerTimestamp: quote.providerTimestamp,
+          freshness: quote.freshness,
+        },
+      } : {}),
+      closed: observation.closed.map((series) => ({
+        timeframe: series.timeframe,
+        candles: series.candles.map((candle) => ({
+          timeframe: candle.timeframe,
+          time: candle.time,
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+          ...(candle.volume !== undefined ? { volume: candle.volume } : {}),
+        })),
+      })),
+      forming: observation.forming.map((bar) => ({
+        timeframe: bar.timeframe,
+        status: bar.status,
+        openTime: bar.openTime,
+        closeTime: bar.closeTime,
+        ...(bar.reason ? { reason: bar.reason } : {}),
+        ...(bar.open !== undefined ? {
+          open: bar.open,
+          high: bar.high,
+          low: bar.low,
+          close: bar.close,
+          printCount: bar.printCount,
+          ...(bar.volume !== undefined ? { volume: bar.volume } : {}),
+        } : {}),
+      })),
     },
   };
 }
@@ -455,6 +542,7 @@ export async function invokeXauUsdTool(
     if (name === "list_xauusd_tools") produced = { body: await listTools(state), events: [] };
     else if (name === "get_xauusd_quote") produced = await readQuote(state, startedId);
     else if (name === "get_xauusd_candles") produced = await readCandles(state, args, startedId);
+    else if (name === "get_xauusd_observation") produced = await readObservation(state);
     else if (name === "propose_decision") produced = await proposeDecision(state, args);
     else if (name === "propose_order_intent") produced = await proposeIntent(state, args);
     else if (name === "consult_specialist") produced = await consult(state, args);

@@ -78,7 +78,7 @@ function emit(
     instrument: "XAUUSD",
     actor: provider.providerId,
     ...(request.runtime ? {
-      runtimeEventId: request.runtime.eventId,
+      ...(request.runtime.eventId ? { runtimeEventId: request.runtime.eventId } : {}),
       runtimeThreadId: request.runtime.threadId,
       runtimeTurnId: request.runtime.turnId,
     } : {}),

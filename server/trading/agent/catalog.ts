@@ -2,7 +2,7 @@ import type { AutonomyLevel } from "../../../shared/trading/autonomy.ts";
 import type { TradingEnvironment } from "../../../shared/trading/environment.ts";
 import type { ToolJsonSchema } from "./schema.ts";
 
-export const XAUUSD_TOOL_CATALOG_VERSION = "xauusd-tools-1";
+export const XAUUSD_TOOL_CATALOG_VERSION = "xauusd-tools-2";
 
 /** Model-accessible names that must never exist. Checked by name, not by a
  * workflow. */
@@ -65,6 +65,7 @@ export interface XauUsdToolSpec {
   readonly availability: "implemented" | "unavailable";
   readonly unavailableReason?: string;
   readonly requiresSpecialist?: boolean;
+  readonly requiresReplay?: boolean;
 }
 
 const failureNote = " Failures return ok:false, a code, and failClosed:true. They do not invent a successful payload.";
@@ -79,7 +80,7 @@ const quoteOutput: ToolJsonSchema = {
     instrument: { type: "string", enum: ["XAUUSD"] },
     agentRunId: { type: "string" },
     environment: { type: "string", enum: ["SIMULATOR", "PAPER", "LIVE"] },
-    provenance: { type: "string", enum: ["LIVE", "STALE", "SIMULATOR", "UNAVAILABLE"] },
+    provenance: { type: "string", enum: ["LIVE", "STALE", "SIMULATOR", "UNAVAILABLE", "REPLAY"] },
     freshness: { type: "string" },
     snapshotId: { type: "string" },
     contextId: { type: "string" },
@@ -115,7 +116,7 @@ const candleOutput: ToolJsonSchema = {
     agentRunId: { type: "string" },
     environment: { type: "string", enum: ["SIMULATOR", "PAPER", "LIVE"] },
     timeframe: { type: "string" },
-    provenance: { type: "string" },
+    provenance: { type: "string", enum: ["LIVE", "STALE", "SIMULATOR", "UNAVAILABLE", "REPLAY"] },
     freshness: { type: "string" },
     snapshotId: { type: "string" },
     contextId: { type: "string" },
@@ -209,6 +210,123 @@ export const XAUUSD_TOOL_CATALOG: readonly XauUsdToolSpec[] = [
     audit: "read",
     sensitivity: "internal",
     availability: "implemented",
+  },
+  {
+    name: "get_xauusd_observation",
+    version: XAUUSD_TOOL_CATALOG_VERSION,
+    description: "Read the unified XAUUSD observation at the current replay time: the knowable quote, closed candles, and forming candle. Does not accept a symbol or a timestamp. The server does not choose which other tools to call. Omitted unless this run is bound to a replay session." + failureNote,
+    inputSchema: emptyObject("No arguments. Observation time is the replay clock, not a caller-supplied timestamp."),
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "ok",
+        "instrument",
+        "agentRunId",
+        "environment",
+        "provenance",
+        "observationAt",
+        "quality",
+        "qualityReasons",
+        "replaySessionId",
+        "datasetId",
+        "datasetVersion",
+        "datasetFingerprint",
+        "closed",
+        "forming",
+      ],
+      properties: {
+        ok: { type: "boolean" },
+        tool: { type: "string" },
+        instrument: { type: "string", enum: ["XAUUSD"] },
+        agentRunId: { type: "string" },
+        environment: { type: "string", enum: ["SIMULATOR"] },
+        provenance: { type: "string", enum: ["REPLAY"] },
+        observationAt: { type: "string" },
+        quality: { type: "string", enum: ["COMPLETE", "PARTIAL", "UNAVAILABLE"] },
+        qualityReasons: { type: "array", items: { type: "string" } },
+        replaySessionId: { type: "string" },
+        datasetId: { type: "string" },
+        datasetVersion: { type: "string" },
+        datasetFingerprint: { type: "string" },
+        configVersion: { type: "string" },
+        clockVersion: { type: "string" },
+        formingPolicy: { type: "string" },
+        observationId: { type: "string" },
+        contentHash: { type: "string" },
+        snapshotId: { type: "string" },
+        contextId: { type: "string" },
+        freshness: { type: "string" },
+        quote: {
+          type: "object",
+          additionalProperties: false,
+          required: ["bid", "ask", "spread", "providerTimestamp", "freshness"],
+          properties: {
+            bid: { type: "number" },
+            ask: { type: "number" },
+            spread: { type: "number" },
+            providerTimestamp: { type: "string" },
+            freshness: { type: "string" },
+          },
+        },
+        closed: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["timeframe", "candles"],
+            properties: {
+              timeframe: { type: "string" },
+              candles: {
+                type: "array",
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["timeframe", "time", "open", "high", "low", "close"],
+                  properties: {
+                    timeframe: { type: "string" },
+                    time: { type: "string" },
+                    open: { type: "number" },
+                    high: { type: "number" },
+                    low: { type: "number" },
+                    close: { type: "number" },
+                    volume: { type: "number" },
+                  },
+                },
+              },
+            },
+          },
+        },
+        forming: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["timeframe", "status", "openTime", "closeTime"],
+            properties: {
+              timeframe: { type: "string" },
+              status: { type: "string", enum: ["available", "unavailable"] },
+              reason: { type: "string" },
+              openTime: { type: "string" },
+              closeTime: { type: "string" },
+              open: { type: "number" },
+              high: { type: "number" },
+              low: { type: "number" },
+              close: { type: "number" },
+              volume: { type: "number" },
+              printCount: { type: "integer" },
+            },
+          },
+        },
+      },
+    },
+    permission: "market.read",
+    environments: ["SIMULATOR"],
+    minAutonomy: 0,
+    audit: "read",
+    sensitivity: "internal",
+    availability: "implemented",
+    requiresReplay: true,
   },
   {
     name: "propose_decision",
@@ -375,6 +493,7 @@ export interface ToolGate {
   readonly autonomyLevel: AutonomyLevel;
   readonly permissions: readonly TradingPermission[];
   readonly specialistAttached: boolean;
+  readonly replayAttached: boolean;
 }
 
 export interface FilteredTool {
@@ -401,6 +520,7 @@ export function filterToolCatalog(
 function withheldReason(spec: XauUsdToolSpec, gate: ToolGate): string | undefined {
   if (spec.availability !== "implemented") return spec.unavailableReason ?? "unavailable";
   if (spec.requiresSpecialist && !gate.specialistAttached) return "no specialist consultant is attached";
+  if (spec.requiresReplay && !gate.replayAttached) return "replay observation is not attached";
   if (!spec.environments.includes(gate.environment)) return "not available in this environment";
   if (gate.autonomyLevel < spec.minAutonomy) return "autonomy level does not allow this tool";
   if (spec.permission && !gate.permissions.includes(spec.permission)) return "permission is not granted";

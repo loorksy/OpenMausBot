@@ -13,6 +13,8 @@ export interface XauUsdSessionState {
   readonly grant: XauUsdTurnGrant;
   readonly manifest: VersionManifest;
   readonly clock: MarketClock;
+  /** Market clock at the moment of the call. Replay sessions advance without replacing this object. */
+  now(): MarketClock;
   readonly gate: ToolGate;
   readonly modelId: string;
   readonly modelFallback?: {

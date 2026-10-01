@@ -1,6 +1,7 @@
-/** Phase 1 contracts, the Phase 2 market-data boundary, and the Phase 3
- * XAUUSD tool catalog. The catalog is mounted by the existing chat tool
- * loop when a turn carries an opt-in grant. This package does not submit orders. */
+/** Phase 1 contracts, the Phase 2 market-data boundary, the Phase 3 XAUUSD
+ * tool catalog, and the Phase 4 replay clock. The catalog is mounted by the
+ * existing chat tool loop when a turn carries an opt-in grant. Replay changes
+ * market time and market data only. This package does not submit orders. */
 
 export * from "./domain/index.ts";
 export { foundationControl } from "./control/boundaries.ts";
@@ -41,3 +42,13 @@ export {
   selectTradingModel,
 } from "./agent/index.ts";
 export type { XauUsdToolSession, XauUsdTurnGrant } from "./agent/index.ts";
+export {
+  REPLAY_CLOCK_VERSION,
+  REPLAY_CONFIG_VERSION,
+  REPLAY_ORDERING_RULE,
+  bindReplayGrant,
+  createReplayClock,
+  createReplayDataset,
+  createReplaySession,
+} from "./replay/index.ts";
+export type { MarketObservation, ReplayDataset, ReplaySession } from "./replay/index.ts";

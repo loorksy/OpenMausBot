@@ -186,6 +186,9 @@ describe("environments", () => {
   it("rejects silent simulator and live relabeling", () => {
     expect(() => assertProvenanceForEnvironment("LIVE", "SIMULATOR")).toThrow(TradingDomainError);
     expect(() => assertProvenanceForEnvironment("SIMULATOR", "LIVE")).toThrow(TradingDomainError);
+    expect(() => assertProvenanceForEnvironment("LIVE", "REPLAY")).toThrow(TradingDomainError);
+    expect(() => assertProvenanceForEnvironment("PAPER", "REPLAY")).toThrow(TradingDomainError);
+    expect(parseMarketSnapshot(snapshot({ environment: "SIMULATOR", provenance: "REPLAY" })).provenance).toBe("REPLAY");
     expect(() => parseMarketSnapshot(snapshot({ environment: "LIVE", provenance: "SIMULATOR" }))).toThrow(TradingDomainError);
     try {
       parseMarketSnapshot(snapshot({ environment: "PAPER", provenance: "SIMULATOR" }));

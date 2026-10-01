@@ -420,7 +420,7 @@ describe("XAUUSD tool catalog", () => {
     expect(quote).toBeDefined();
     const hidden = filterToolCatalog(
       [{ ...quote!, environments: ["SIMULATOR"] }],
-      { environment: "LIVE", autonomyLevel: 2, permissions: ["market.read"], specialistAttached: false },
+      { environment: "LIVE", autonomyLevel: 2, permissions: ["market.read"], specialistAttached: false, replayAttached: false },
     );
     expect(hidden.available).toEqual([]);
     expect(hidden.unavailable[0]?.reason).toMatch(/environment/);

@@ -3,7 +3,7 @@ import { assertProvenanceForEnvironment, parseTradingEnvironment } from "../../.
 import { TradingDomainError } from "../../../shared/trading/errors.ts";
 import { recordIdSchema } from "../../../shared/trading/ids.ts";
 import { parseTradingEvent, type TradingEvent } from "../../../shared/trading/events.ts";
-import { parseVersionManifest } from "../../../shared/trading/version-manifest.ts";
+import { assertReplayDataset, parseVersionManifest } from "../../../shared/trading/version-manifest.ts";
 import type { RuntimeEvent } from "../../../shared/runtime-events.ts";
 import { assessClock, assertClockLimits, canonicalizeUtc } from "../infrastructure/market_data/clock.ts";
 import type { MarketClock } from "../infrastructure/market_data/model.ts";
@@ -97,11 +97,19 @@ export function createXauUsdToolSession(grant: XauUsdTurnGrant): XauUsdToolSessi
     }
     if (!permissions.includes(permission)) permissions.push(permission);
   }
+  if (grant.replay) {
+    if (environment !== "SIMULATOR") {
+      throw new TradingDomainError("environment_isolation", "replay cannot bind to PAPER or LIVE");
+    }
+    if (grant.provider !== grant.replay.provider) {
+      throw new TradingDomainError("environment_isolation", "replay grant must use the replay provider");
+    }
+  }
   if (grant.provider.environment !== environment) {
     throw new TradingDomainError("environment_isolation", "provider environment does not match the trading run");
   }
   assertProvenanceForEnvironment(environment, grant.provider.successProvenance);
-  const clock = canonicalClock(grant.clock);
+  const clock = canonicalClock(grant.replay ? grant.replay.marketClock() : grant.clock);
   let modelId = requireVersion(grant.modelId, "modelId");
   const modelProvider = requireVersion(grant.modelProvider, "modelProvider");
   let modelFallback: XauUsdSessionState["modelFallback"];
@@ -131,17 +139,23 @@ export function createXauUsdToolSession(grant: XauUsdTurnGrant): XauUsdToolSessi
     toolCatalogVersion: XAUUSD_TOOL_CATALOG_VERSION,
     riskVersion: "not-implemented",
     policyVersion: "not-implemented",
-    featureDataVersion: "phase-3",
+    featureDataVersion: grant.replay ? "xauusd-replay-1" : "phase-3",
+    ...(grant.replay ? { datasetVersion: grant.replay.datasetVersion } : {}),
   });
+  if (grant.replay) assertReplayDataset(manifest);
   const state: XauUsdSessionState = {
     grant,
     manifest,
     clock,
+    now() {
+      return grant.replay ? canonicalClock(grant.replay.marketClock()) : clock;
+    },
     gate: {
       environment,
       autonomyLevel: grant.autonomyLevel,
       permissions,
       specialistAttached: typeof grant.askSpecialist === "function",
+      replayAttached: Boolean(grant.replay),
     },
     modelId,
     ...(modelFallback ? { modelFallback } : {}),

@@ -4,6 +4,7 @@ import type { TradingEnvironment } from "../../../shared/trading/environment.ts"
 import type { RuntimeEvent } from "../../../shared/runtime-events.ts";
 import type { MarketClock } from "../infrastructure/market_data/model.ts";
 import type { XauUsdMarketDataProvider } from "../infrastructure/market_data/provider.ts";
+import type { ReplaySession } from "../replay/session.ts";
 import type { TradingPermission } from "./catalog.ts";
 import type { ModelRoutingPolicy, TradingTaskClass } from "./routing.ts";
 
@@ -40,5 +41,7 @@ export interface XauUsdTurnGrant {
     readonly availableModelIds: readonly string[];
   };
   readonly askSpecialist?: (input: SpecialistConsultation) => Promise<{ readonly text: string }>;
+  /** Set by bindReplayGrant. Tool calls read this clock at invocation time. */
+  readonly replay?: ReplaySession;
   emitRuntime?(event: RuntimeEvent): void;
 }

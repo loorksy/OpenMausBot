@@ -71,7 +71,7 @@ export function createXauUsdMarketSnapshot(input: {
     instrument: "XAUUSD",
     actor: snapshot.provider,
     ...(request.runtime ? {
-      runtimeEventId: request.runtime.eventId,
+      ...(request.runtime.eventId ? { runtimeEventId: request.runtime.eventId } : {}),
       runtimeThreadId: request.runtime.threadId,
       runtimeTurnId: request.runtime.turnId,
     } : {}),
@@ -91,7 +91,7 @@ export function createXauUsdMarketSnapshot(input: {
  * It does not run analysis, regime detection, or decisions. */
 export function buildXauUsdMarketContext(
   snapshot: MarketSnapshot,
-  input: { readonly id: string; readonly evidenceIds?: readonly string[] },
+  input: { readonly id: string; readonly evidenceIds?: readonly string[]; readonly session?: string },
 ): XauUsdContext {
   if (!snapshot.versionManifestId) {
     throw new TradingDomainError("market_data_rejected", "snapshot is missing a version manifest id");
@@ -108,5 +108,6 @@ export function buildXauUsdMarketContext(
     asOf: snapshot.capturedAt,
     provenance: snapshot.provenance,
     createdAt: snapshot.processedAt ?? snapshot.createdAt,
+    ...(input.session ? { session: input.session } : {}),
   });
 }

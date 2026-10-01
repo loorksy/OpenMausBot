@@ -34,10 +34,14 @@ is rejected. The close is not trimmed out of an otherwise accepted series.
 
 ## Provenance and freshness
 
-Provenance remains `LIVE`, `STALE`, `SIMULATOR`, or `UNAVAILABLE`.
+Provenance is `LIVE`, `STALE`, `SIMULATOR`, `UNAVAILABLE`, or `REPLAY`.
+`REPLAY` is historical market time. It is valid only in `SIMULATOR`, and a
+stale replay payload stays `REPLAY`. It is not relabeled `LIVE`, `STALE`, or
+`SIMULATOR`.
 
 A failed read from a live provider is `UNAVAILABLE`, or `STALE` when the
-failure kind is `stale_response`. It is never rewritten to `SIMULATOR`.
+failure kind is `stale_response`. It is never rewritten to `SIMULATOR` or
+`REPLAY`.
 A success body that claims `SIMULATOR` outside the `SIMULATOR` environment
 is rejected.
 
@@ -69,5 +73,8 @@ only after that operation runs.
 ## What this phase does not implement
 
 Broker adapters, execution, simulator fills, paper trading, live trading,
-risk, policy, order intents, replay, backtesting, a production trading
-database, a desk, and any real market-data vendor.
+risk, policy, order intents, backtesting, a production trading database, a
+desk, and any real market-data vendor. Historical replay of local XAUUSD
+fixtures is `docs/trading/replay.md`. A Phase 2 read still rejects a candle
+series that contains a future bar. Replay does not trim that series after
+the fact; the replay provider omits a bar until its close time.
