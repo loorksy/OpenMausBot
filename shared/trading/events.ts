@@ -81,6 +81,7 @@ export const TRADING_EVENT_TYPES = [
   "job.wake.scheduled",
   "job.wake.started",
   "job.wake.completed",
+  "job.wake.deferred",
   "job.sleeping",
   "job.waiting_approval",
   "job.paused",

@@ -12,7 +12,8 @@ export interface JobRepository {
   saveJob(job: XauUsdJob): { readonly inserted: boolean };
   readJob(jobId: string): XauUsdJob | null;
   listJobs(): readonly XauUsdJob[];
-  claimWake(wake: XauUsdJobWake): { readonly claimed: boolean };
+  claimWake(wake: XauUsdJobWake, nowIso: string): { readonly claimed: boolean; readonly reclaimed: boolean };
+  advanceWake(expectedStatus: XauUsdJobWake["status"], wake: XauUsdJobWake): { readonly advanced: boolean };
   readWakes(jobId: string): readonly XauUsdJobWake[];
   appendEvents(events: readonly TradingEvent[]): void;
 }
@@ -51,8 +52,11 @@ export function createJobRepository(db: DatabaseSync, environment: TradingEnviro
       `).all() as Array<{ payload_json: string }>;
       return rows.map((row) => seal(parseJob(row.payload_json)));
     },
-    claimWake(wake) {
+    claimWake(wake, nowIso) {
       assertNoSecretFields(wake, "xauusd job wake");
+      if (wake.status !== "claimed") {
+        throw new TradingDomainError("trading_store_rejected", "XAUUSD wake claim was rejected. Failing closed.");
+      }
       db.exec("BEGIN IMMEDIATE");
       try {
         const inserted = db.prepare(`
@@ -69,8 +73,30 @@ export function createJobRepository(db: DatabaseSync, environment: TradingEnviro
           wake.runtimeTurnId,
           canonicalJson(wake),
         );
+        if (changes(inserted) === 1) {
+          db.exec("COMMIT");
+          return { claimed: true, reclaimed: false };
+        }
+        const reclaimed = db.prepare(`
+          UPDATE xauusd_job_wakes
+          SET status = ?, agent_run_id = ?, runtime_thread_id = ?, runtime_turn_id = ?, payload_json = ?
+          WHERE wake_id = ?
+            AND status IN ('claimed', 'dispatching')
+            AND (
+              json_extract(payload_json, '$.leaseExpiresAt') IS NULL
+              OR json_extract(payload_json, '$.leaseExpiresAt') <= ?
+            )
+        `).run(
+          wake.status,
+          wake.agentRunId,
+          wake.runtimeThreadId,
+          wake.runtimeTurnId,
+          canonicalJson(wake),
+          wake.wakeId,
+          nowIso,
+        );
         db.exec("COMMIT");
-        return { claimed: changes(inserted) === 1 };
+        return { claimed: changes(reclaimed) === 1, reclaimed: changes(reclaimed) === 1 };
       } catch (error) {
         try {
           db.exec("ROLLBACK");
@@ -80,6 +106,23 @@ export function createJobRepository(db: DatabaseSync, environment: TradingEnviro
         if (error instanceof TradingDomainError) throw error;
         throw new TradingDomainError("trading_store_rejected", "Trading store write failed. Failing closed.");
       }
+    },
+    advanceWake(expectedStatus, wake) {
+      assertNoSecretFields(wake, "xauusd job wake");
+      const updated = db.prepare(`
+        UPDATE xauusd_job_wakes
+        SET status = ?, agent_run_id = ?, runtime_thread_id = ?, runtime_turn_id = ?, payload_json = ?
+        WHERE wake_id = ? AND status = ?
+      `).run(
+        wake.status,
+        wake.agentRunId,
+        wake.runtimeThreadId,
+        wake.runtimeTurnId,
+        canonicalJson(wake),
+        wake.wakeId,
+        expectedStatus,
+      );
+      return { advanced: changes(updated) === 1 };
     },
     readWakes(jobId) {
       const rows = db.prepare(`

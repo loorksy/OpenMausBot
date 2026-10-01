@@ -6,8 +6,8 @@ import { tradingFact } from "../audit.ts";
 import type { JobRepository } from "../persistence/jobs.ts";
 import { contentHash } from "../replay/hash.ts";
 import { revisionId } from "./interpret.ts";
-import { jobStatusLabel, XAUUSD_JOB_VERSION, type XauUsdApprovalHold, type XauUsdJob, type XauUsdJobBlockReason, type XauUsdJobStatus, type XauUsdJobWake } from "./model.ts";
-import { collapsedWakeSlot, epochMs, nextScheduledWake } from "./schedule.ts";
+import { jobStatusLabel, XAUUSD_JOB_VERSION, XAUUSD_WAKE_LEASE_MS, type XauUsdApprovalHold, type XauUsdJob, type XauUsdJobBlockReason, type XauUsdJobStatus, type XauUsdJobWake, type XauUsdWakeStatus } from "./model.ts";
+import { collapsedWakeSlot, epochMs, isoFromEpoch, nextScheduledWake } from "./schedule.ts";
 
 export interface XauUsdTurnRequest {
   readonly jobId: string;
@@ -21,6 +21,9 @@ export interface XauUsdTurnRequest {
 
 export interface XauUsdTurnStarter {
   startTurn(request: XauUsdTurnRequest): Promise<{ readonly runtimeTurnId: string }>;
+  /** True while this process still holds the turn. Omitted means the starter
+   * promise was the whole wake, so dispatch may complete it. */
+  turnIsActive?(runtimeTurnId: string): boolean;
 }
 
 const TERMINAL = new Set<XauUsdJobStatus>(["COMPLETED", "CANCELLED", "FAILED"]);
@@ -64,11 +67,34 @@ async function dispatchOne(
     repository.saveJob(reassessment);
     job = reassessment;
   }
+  const noted: TradingEvent[] = [];
+  const known = repository.readWakes(job.jobId);
+  const blocking = blockingWake(known, nowIso);
+  if (blocking?.status === "dispatched") {
+    if (turns.turnIsActive?.(blocking.runtimeTurnId ?? "") === true) {
+      return deferActiveWake(job, blocking, nowIso);
+    }
+    const interrupted = sealWake(repository, blocking, "interrupted");
+    const nextWakeAt = nextScheduledWake(job, interrupted.scheduledFor);
+    const settled = revise(job, nextWakeAt === null ? "COMPLETED" : "SLEEPING", nowIso, { nextWakeAt, lastWakeAt: interrupted.scheduledFor });
+    repository.saveJob(settled);
+    noted.push(fact(settled, "job.wake.completed", nowIso, interrupted, interrupted.runtimeTurnId ?? undefined));
+    job = settled;
+  }
   const slot = collapsedWakeSlot(job, nowIso);
-  if (slot === null) return { request: null, events: [] };
-  const wake = wakeRecord(job, slot);
-  const claim = repository.claimWake(wake);
-  if (!claim.claimed) return { request: null, events: [] };
+  if (slot === null) return { request: null, events: noted };
+  const held = blockingWake(repository.readWakes(job.jobId), nowIso);
+  if (held !== null) {
+    const deferred = deferActiveWake(job, held, nowIso);
+    return { request: null, events: [...noted, ...deferred.events] };
+  }
+  const wake = plannedWake(job, slot, nowIso);
+  const claim = repository.claimWake(wake, nowIso);
+  if (!claim.claimed) return { request: null, events: noted };
+  const dispatching = { ...wake, status: "dispatching" as const };
+  if (!repository.advanceWake("claimed", dispatching).advanced) {
+    throw new TradingDomainError("trading_store_rejected", "XAUUSD wake lease was lost. Failing closed.");
+  }
   const running = revise(job, "RUNNING", nowIso, { lastWakeAt: slot, blockReason: job.blockReason });
   repository.saveJob(running);
   const began = job.status === "CREATED" || job.status === "WAITING_FOR_REASSESSMENT"
@@ -83,30 +109,45 @@ async function dispatchOne(
     environment: job.environment,
     prompt: monitoringPrompt(job),
   };
-  const scheduled = fact(running, "job.wake.scheduled", nowIso, wake, request.runtimeTurnId);
+  const scheduled = fact(running, "job.wake.scheduled", nowIso, dispatching, request.runtimeTurnId);
+  let dispatched: XauUsdJobWake;
   try {
     const startedTurn = await turns.startTurn(request);
     if (startedTurn.runtimeTurnId !== request.runtimeTurnId) {
       throw new TradingDomainError("trading_store_rejected", "XAUUSD wake turn identity was rejected. Failing closed.");
     }
-  } catch {
+    dispatched = { ...dispatching, status: "dispatched", leaseExpiresAt: null };
+    if (!repository.advanceWake("dispatching", dispatched).advanced) {
+      throw new TradingDomainError("trading_store_rejected", "XAUUSD wake lease was lost. Failing closed.");
+    }
+  } catch (error) {
+    if (error instanceof TradingDomainError && error.message.includes("lease was lost")) throw error;
+    const failedWake = { ...dispatching, status: "failed" as const, leaseExpiresAt: null };
+    repository.advanceWake("dispatching", failedWake);
     const nextWakeAt = nextScheduledWake(running, slot);
     const failed = revise(running, nextWakeAt === null ? "COMPLETED" : "SLEEPING", nowIso, { nextWakeAt });
     repository.saveJob(failed);
-    return { request: null, events: [...began, scheduled, fact(failed, "job.failed", nowIso, wake)] };
+    return { request: null, events: [...noted, ...began, scheduled, fact(failed, "job.failed", nowIso, failedWake)] };
   }
+  if (turns.turnIsActive?.(request.runtimeTurnId) === true) {
+    return {
+      request,
+      events: [...noted, ...began, scheduled, fact(running, "job.wake.started", nowIso, dispatched, request.runtimeTurnId)],
+    };
+  }
+  const completedWake = sealWake(repository, dispatched, "completed");
   const nextWakeAt = nextScheduledWake(running, slot);
   const blockReason = running.blockReason === "approval" ? null : running.blockReason;
   const sleeping = revise(running, nextWakeAt === null ? "COMPLETED" : "SLEEPING", nowIso, { nextWakeAt, blockReason });
   repository.saveJob(sleeping);
-  const startedWake = fact(sleeping, "job.wake.started", nowIso, wake, request.runtimeTurnId);
   return {
     request,
     events: [
+      ...noted,
       ...began,
       scheduled,
-      startedWake,
-      fact(sleeping, "job.wake.completed", nowIso, wake, request.runtimeTurnId),
+      fact(sleeping, "job.wake.started", nowIso, completedWake, request.runtimeTurnId),
+      fact(sleeping, "job.wake.completed", nowIso, completedWake, request.runtimeTurnId),
       fact(sleeping, nextWakeAt === null ? "job.completed" : "job.sleeping", nowIso),
     ],
   };
@@ -214,7 +255,8 @@ function revise(job: XauUsdJob, status: XauUsdJobStatus, at: string, patch: Part
   };
 }
 
-function wakeRecord(job: XauUsdJob, scheduledFor: string): XauUsdJobWake {
+/** Deterministic wake identity for one job slot. The id does not include a random value. */
+export function plannedWake(job: Pick<XauUsdJob, "jobId" | "runtimeThreadId" | "nextWakeAt">, scheduledFor: string, nowIso: string): XauUsdJobWake {
   const wakeId = `wake.${contentHash({ schema: XAUUSD_JOB_VERSION, jobId: job.jobId, scheduledFor }).slice(0, 40)}`;
   return {
     wakeId,
@@ -224,8 +266,67 @@ function wakeRecord(job: XauUsdJob, scheduledFor: string): XauUsdJobWake {
     agentRunId: `run.${contentHash({ schema: XAUUSD_JOB_VERSION, wakeId, role: "agent" }).slice(0, 40)}`,
     runtimeThreadId: job.runtimeThreadId,
     runtimeTurnId: `turn.${contentHash({ schema: XAUUSD_JOB_VERSION, jobId: job.jobId, scheduledFor, role: "turn" }).slice(0, 40)}`,
-    collapsedFrom: job.nextWakeAt !== scheduledFor ? job.nextWakeAt : null,
+    collapsedFrom: job.nextWakeAt !== null && job.nextWakeAt !== scheduledFor ? job.nextWakeAt : null,
+    leaseExpiresAt: isoFromEpoch(epochMs(nowIso) + XAUUSD_WAKE_LEASE_MS),
   };
+}
+
+function blockingWake(wakes: readonly XauUsdJobWake[], nowIso: string): XauUsdJobWake | null {
+  const dispatched = wakes.find((wake) => wake.status === "dispatched");
+  if (dispatched) return dispatched;
+  return wakes.find((wake) => leaseOpen(wake, nowIso)) ?? null;
+}
+
+function leaseOpen(wake: XauUsdJobWake, nowIso: string): boolean {
+  if (wake.status !== "claimed" && wake.status !== "dispatching") return false;
+  if (wake.leaseExpiresAt == null) return false;
+  return epochMs(wake.leaseExpiresAt) > epochMs(nowIso);
+}
+
+function sealWake(repository: JobRepository, wake: XauUsdJobWake, status: Extract<XauUsdWakeStatus, "completed" | "interrupted">): XauUsdJobWake {
+  const sealed = { ...wake, status, leaseExpiresAt: null };
+  if (!repository.advanceWake(wake.status, sealed).advanced) {
+    throw new TradingDomainError("trading_store_rejected", "XAUUSD wake lease was lost. Failing closed.");
+  }
+  return sealed;
+}
+
+function deferActiveWake(job: XauUsdJob, active: XauUsdJobWake, nowIso: string): { request: null; events: TradingEvent[] } {
+  const slot = collapsedWakeSlot(job, nowIso);
+  if (slot === null || slot === active.scheduledFor) return { request: null, events: [] };
+  return { request: null, events: [deferredFact(job, slot, nowIso, active)] };
+}
+
+function deferredFact(job: XauUsdJob, scheduledFor: string, at: string, active: XauUsdJobWake): TradingEvent {
+  const eventId = `tev.${contentHash({ schema: XAUUSD_JOB_VERSION, type: "job.wake.deferred", jobId: job.jobId, scheduledFor }).slice(0, 40)}`;
+  const event = tradingFact({
+    type: "job.wake.deferred",
+    eventId,
+    at,
+    agentRunId: active.agentRunId,
+    correlationId: recordIdSchema.safeParse(job.taskId).success ? job.taskId : job.agentRunId,
+    environment: job.environment,
+    actor: "xauusd-job",
+    nextState: job.status,
+    runtimeThreadId: job.runtimeThreadId,
+    runtimeTurnId: active.runtimeTurnId,
+    payload: {
+      jobId: job.jobId,
+      status: job.status,
+      statusLabel: job.statusLabel,
+      wakeId: active.wakeId,
+      scheduledFor,
+      runtimeThreadId: job.runtimeThreadId,
+      runtimeTurnId: active.runtimeTurnId,
+      blockReason: job.blockReason,
+      brokerCall: false,
+      activeWakeStatus: active.status,
+    },
+  });
+  if (event === null) {
+    throw new TradingDomainError("trading_store_rejected", "XAUUSD job event was rejected. Failing closed.");
+  }
+  return event;
 }
 
 function monitoringPrompt(job: XauUsdJob): string {

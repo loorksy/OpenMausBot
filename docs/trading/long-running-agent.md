@@ -27,10 +27,10 @@ flowchart TD
     JOB --> RECON
 ```
 
-`RoutineManager` remains the only timer. It already wakes a bot by calling
-`startTurn`. A job dispatcher may be passed as `onClock` on that same tick.
-The trading store is not opened unless the caller supplies a path, so the
-server does not mount a hidden ledger.
+`RoutineManager` remains the only timer. It is constructed once, in
+`server/index.ts`, and started once after the server is listening. A job
+dispatcher may be passed as `onClock` on that same tick. There is no second
+timer and no second dispatcher inside the job module.
 
 ## Job
 
@@ -47,11 +47,29 @@ so a slow wake does not drift the series.
 ## Wake and sleep
 
 A due job claims one durable wake id, `wake.` plus a hash of the job and the
-slot. The same slot cannot start a second turn. The claim commits before
-`startTurn`. The turn id is the same hash, not a random value. The turn runs
-in the job's `runtimeThreadId` through the injected starter, which is the
-existing runtime's turn entry. The prompt tells the agent to read XAUUSD with
-the tools it already has. It does not name an indicator or an entry rule.
+slot. The turn id is the same hash, not a random value. The claim commits
+before `startTurn`. While the row is `claimed` or `dispatching` it holds a
+lease of two minutes, measured from the caller-supplied clock. A second
+delivery in that window does not start a turn. After the lease, an abandoned
+claim or `dispatching` row can be reclaimed. Reclaim keeps the same wake id
+and the same turn id, then calls `startTurn` once. It does not call MetaApi
+and it does not retry a broker submission.
+
+`dispatched` means `startTurn` accepted that turn. That row does not expire
+with the lease. The same wake is not started again. If this process no longer
+reports the turn as active, the row is sealed `interrupted` and the next
+schedule slot may be considered. A later slot that arrives while the turn is
+still active is not started. One deferred trading event records that slot.
+The job keeps a single active wake.
+
+The turn runs in the job's `runtimeThreadId` through the injected starter,
+which is the existing runtime's turn entry. The prompt tells the agent to
+read XAUUSD with the tools it already has. It does not name an indicator or
+an entry rule.
+
+Job status, wake status, execution state, and reconciliation state stay on
+separate fields. A running job can hold a dispatched wake, an unsubmitted
+decision, and a reconciled or unknown execution at the same time.
 
 The starter's promise is the end of that wake. `onClock` is awaited, so a
 host that resolves the starter only when the turn has finished also keeps
@@ -77,8 +95,12 @@ When `endAt` is reached, the job completes. It does not create another day.
 
 Job revisions and wake claims are rows in the trading ledger. After a
 restart, the latest revision is the status, including the next wake, an
-approval hold, and an unresolved execution or reconciliation state. A claimed
-wake is not claimed again. A cancelled or completed job does not wake.
+approval hold, and an unresolved execution or reconciliation state. An
+unexpired claim is not claimed again. An expired claim can be reclaimed
+once, with the original wake id. A `dispatched` wake is not reclaimed into
+a second turn. A cancelled or completed job does not wake. `UNKNOWN`,
+`DESYNCED`, and `SUBMISSION_UNKNOWN` still block a handoff. Wake recovery
+does not submit an order.
 
 ## Approval, kill switch, reconciliation
 
@@ -96,6 +118,25 @@ may be called. This module does not call MetaApi.
 
 Pause and cancel are terminal for execution. Cancelled jobs do not wake.
 Cancellation does not close a broker position.
+
+## Production mount
+
+The process does not open a trading database.
+
+`OMB_DATA_DIR` (default `~/.openmausbot`) is the app home. It is not a
+trading partition. PAPER and LIVE cannot share a file, and the environment
+must be named by the caller. There is no default path and no default of LIVE.
+
+`readXauUsdJobMount` reads `OMB_XAUUSD_STORE_PATH` and
+`OMB_XAUUSD_ENVIRONMENT` together. If both are absent it reports that the
+mount is off and creates nothing. If only one is set it throws and creates
+nothing. It does not join either value onto the app home.
+
+`server/index.ts` does not call that function and does not pass `onClock`.
+The production `startTurn(botId, text, { threadId })` does not accept or
+return the job's deterministic `runtimeTurnId`, and a job row has no bot id.
+Connecting the dispatcher there would reject every wake or change chat turn
+identity. That wiring stays out until a turn can keep the job's turn id.
 
 ## What this does not add
 

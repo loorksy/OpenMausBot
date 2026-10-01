@@ -12,6 +12,10 @@ export const XAUUSD_JOB_MAX_DURATION_MS = 24 * 60 * 60 * 1000;
 /** Used only when a request names a duration and no cadence. It is recorded on the job. */
 export const XAUUSD_JOB_DEFAULT_INTERVAL_MINUTES = 15;
 
+/** How long a claimed or dispatching wake keeps its lease. A dispatched wake
+ * does not expire this way. Broker submission is not retried when it lapses. */
+export const XAUUSD_WAKE_LEASE_MS = 2 * 60 * 1000;
+
 export const XAUUSD_JOB_STATUSES = [
   "CREATED",
   "RUNNING",
@@ -82,15 +86,30 @@ export interface XauUsdJob {
   readonly updatedAt: string;
 }
 
+/** Wake dispatch is not job status, decision state, execution state, or reconciliation. */
+export const XAUUSD_WAKE_STATUSES = [
+  "claimed",
+  "dispatching",
+  "dispatched",
+  "completed",
+  "failed",
+  "interrupted",
+  "collapsed",
+] as const;
+
+export type XauUsdWakeStatus = (typeof XAUUSD_WAKE_STATUSES)[number];
+
 export interface XauUsdJobWake {
   readonly wakeId: string;
   readonly jobId: string;
   readonly scheduledFor: string;
-  readonly status: "claimed" | "completed" | "failed" | "collapsed";
+  readonly status: XauUsdWakeStatus;
   readonly agentRunId: string;
   readonly runtimeThreadId: string;
   readonly runtimeTurnId: string | null;
   readonly collapsedFrom: string | null;
+  /** Set while status is claimed or dispatching. Null after dispatch. */
+  readonly leaseExpiresAt: string | null;
 }
 
 export function jobStatusLabel(
