@@ -100,8 +100,9 @@ an execution path.
 ## What this phase does not implement
 
 Broker adapters, credentials, order submission, fills, position mutation,
-risk calculation, policy evaluation, a desk, charts, and a production trading
-ledger. Research, structure, volatility, account, and broker-health tools
-stay unavailable. CLI engines are not given a second tool loop; they do not
-mount this in-process catalog unless a later phase feeds the same grant
-through their existing MCP mount.
+a desk, charts, and a production trading ledger. Risk and policy are a later
+boundary (`docs/trading/risk.md`, `docs/trading/policy.md`). A tool proposal
+still cannot approve itself. Research, structure, volatility, account, and
+broker-health tools stay unavailable. CLI engines are not given a second tool
+loop; they do not mount this in-process catalog unless a later phase feeds
+the same grant through their existing MCP mount.

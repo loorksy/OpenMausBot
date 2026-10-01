@@ -206,8 +206,11 @@ order intent created from a replay observation stays non-executable.
 ## What this phase does not implement
 
 P&L, fills, spread or slippage models, commissions, position accounting,
-strategy scoring, optimization, walk-forward, and model benchmarking. Risk,
-policy, the execution gate, reconciliation, and the kill switch are still
-unimplemented boundaries. Phase 5 evaluation
+strategy scoring, optimization, walk-forward, and model benchmarking. The
+execution gate, reconciliation, and the kill-switch runtime are still
+unimplemented. Phase 6 can assess a proposal against a replay observation
+(`docs/trading/risk.md`, `docs/trading/policy.md`). `REPLAY` provenance stays
+research: it cannot authorize a `PAPER` or `LIVE` action, and it does not
+become `ELIGIBLE_FOR_FUTURE_EXECUTION`. Phase 5 evaluation
 (`docs/trading/evaluation.md`) runs the existing tool session against this
 replay and records what it did. It does not score a strategy or compute P&L.

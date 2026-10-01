@@ -205,6 +205,15 @@ Those need an explicit later methodology. This phase keeps the raw trajectory
 and the market references so that methodology can be applied without
 reconstructing the run.
 
+## Risk and policy facts
+
+Phase 6 can later be recorded beside an evaluation run. `riskInfrastructureFact`
+and `policyInfrastructureFact` name `risk_accepted`, `risk_rejected`,
+`risk_blocked`, `risk_invalid`, `policy_allowed`, `policy_rejected`,
+`policy_blocked`, and `policy_invalid`. Those are infrastructure facts. They
+are not a trade-quality score, and this phase does not feed them into the
+judge.
+
 ## Open questions
 
 - The driver does not boot the full chat turn. That entrypoint needs a live

@@ -1,0 +1,10 @@
+export { XAUUSD_CONTRACT, XAUUSD_CONTRACT_VERSION, XAUUSD_OUNCES_PER_LOT, XAUUSD_PRICE_UNIT, XAUUSD_QUANTITY_UNIT } from "./contract.ts";
+export type { XauUsdContractSpec } from "./contract.ts";
+export { parseRiskConfig, RISK_ENGINE_VERSION } from "./config.ts";
+export type { RiskConfig } from "./config.ts";
+export { EXPOSURE_SIDES, readAccountRiskState, readMarketRiskFacts } from "./account.ts";
+export type { AccountRiskState, ExposureSide, MarketRiskFacts } from "./account.ts";
+export { assessXauUsdRisk } from "./assess.ts";
+export type { RiskAssessmentInput } from "./assess.ts";
+export { RISK_REASON_CODES, RISK_STATES, riskInfrastructureFact } from "./result.ts";
+export type { RiskDecision, RiskReason, RiskState, RiskTrace } from "./result.ts";

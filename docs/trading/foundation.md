@@ -33,10 +33,11 @@ that later phases replace. Those modules are not mounted on the HTTP server.
   catalog, risk, policy, and feature/data versions. Replay also requires a
   dataset version.
 - `DESYNCED` and `UNKNOWN` reconciliation block autonomous orders. Any other
-  unrecognized reconciliation value throws. `DEGRADED` is a known state and
-  does not by itself block; policy is not implemented yet.
+  unrecognized reconciliation value throws. `DEGRADED` is a known state.
+  Phase 6 policy does not take a reconciliation input, so it does not add a
+  `DEGRADED` rule.
 - A missing or malformed kill-switch state fails closed. An engaged switch
-  blocks. There is no kill-switch runtime.
+  blocks. Policy reads that state. There is still no kill-switch runtime.
 - Autonomy levels `0` through `5` are named `OBSERVE` through
   `AUTONOMOUS_MONITORING`. No level allows a direct broker submit. This is
   separate from provider `approvalMode`.
@@ -47,15 +48,18 @@ Market-data reads use `docs/trading/market-data.md`. The XAUUSD tool
 catalog for the existing OpenMausBot tool loop is `docs/trading/agent-tools.md`.
 Deterministic historical replay is `docs/trading/replay.md`. Evaluation of
 that same agent against replay is `docs/trading/evaluation.md`. The tool catalog
-can propose a decision or a non-executable order intent. No external feed is
-configured. Broker adapters, OANDA, MetaApi, MT5, simulator fills, paper
-execution, live execution, risk calculations, policy evaluation, the
-execution gate, kill-switch enforcement, reconciliation against a broker,
-P&L, strategy scoring, the desk, TradingView, database migrations, and
-production configuration are not implemented.
+can propose a decision or a non-executable order intent. Deterministic risk
+and policy are `docs/trading/risk.md` and `docs/trading/policy.md`. No external
+feed is configured. Broker adapters, OANDA, MetaApi, MT5, simulator fills,
+paper execution, live execution, the execution gate, kill-switch enforcement,
+reconciliation against a broker, P&L, strategy scoring, the desk, TradingView,
+database migrations, and production configuration are not implemented.
 
-`foundationControl` in `server/trading/control/boundaries.ts` throws
-`TradingDomainError` with `failClosed: true` for each of those engines.
+`foundationControl` in `server/trading/control/boundaries.ts` still throws
+`TradingDomainError` with `failClosed: true` when called with no authoritative
+inputs. The risk and policy engines are separate functions that require those
+inputs. The execution gate, reconciliation, kill-switch runtime, and broker
+submit stubs still throw.
 `applyTradingMigrations` and `openTradingStore` throw the same way.
 `TRADING_STORE_SCHEMA_VERSION` is `0`.
 
