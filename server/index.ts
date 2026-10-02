@@ -427,6 +427,8 @@ import * as vps from "./vps-computer.ts";
 import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
 import { settleNativeTradingApprovalFromEnvironment, tradingResponderId } from "./trading/approval/native.ts";
 import { readInstalledXauUsdMarketDataProvider, startNativeRoutineTurn } from "./trading/occurrence/runtime.ts";
+import { tradingDeskReport } from "./trading/desk/project.ts";
+import { queryTokenRejected, tradingHealthReport } from "./trading/production/health.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
 import { BUILT_IN_BROWSER_SYSTEM_PROMPT } from "./browser-engine.ts";
 import { BrowserRuntime, browserRuntimeEnv } from "./browser-runtime.ts";
@@ -14852,12 +14854,20 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     if (method === "GET" && path === "/api/health" && !gate.auth) {
       return json(res, 200, { app: "openmausbot" });
     }
+    if (method === "GET" && path === "/api/health/trading") {
+      if (queryTokenRejected(url.search)) return json(res, 401, { error: "query credentials are not accepted" });
+      return json(res, 200, tradingHealthReport(process.env));
+    }
     // The brand is public too: the sign-in page must carry the deployment's
     // name and icon before anyone has a session, and it holds nothing secret.
     if (method === "GET" && path === "/api/brand" && !gate.auth) {
       return json(res, 200, loadBrand());
     }
     if (!gate.auth) return json(res, gate.status, { error: gate.error });
+    if (method === "GET" && path === "/api/trading/desk") {
+      if (queryTokenRejected(url.search)) return json(res, 401, { error: "query credentials are not accepted" });
+      return json(res, 200, tradingDeskReport(process.env));
+    }
     const auth = gate.auth;
     if (HOSTED_WORKSPACE && auth.kind === "session") {
       const failure = workspaceAccess

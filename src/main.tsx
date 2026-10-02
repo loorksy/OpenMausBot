@@ -42,6 +42,9 @@ async function chooseRoot(): Promise<React.ReactNode> {
     const { DesktopViewer } = await import("./components/DesktopViewer");
     return <DesktopViewer />;
   }
+  const { TradingDesk, tradingDeskSection } = await import("./components/TradingDesk");
+  const deskSection = tradingDeskSection(location.pathname);
+  if (deskSection) return <TradingDesk section={deskSection} />;
   return <App />;
 }
 
