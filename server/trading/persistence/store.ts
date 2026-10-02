@@ -14,6 +14,7 @@ import { canonicalJson } from "../replay/hash.ts";
 import { createJobRepository, type JobRepository } from "./jobs.ts";
 import { createDurableExecutionLedger, insertEvent, readAttempts } from "./ledger.ts";
 import { createApprovalRepository, type ApprovalRepository } from "./approvals.ts";
+import { createMemoryRepository, type MemoryRepository } from "./memory.ts";
 import { createOccurrenceRepository, type OccurrenceRepository } from "./occurrences.ts";
 import type { PersistedExecutionRequest } from "./record.ts";
 import { TRADING_STORE_SCHEMA_SQL } from "./schema.ts";
@@ -26,10 +27,11 @@ import { TRADING_STORE_SCHEMA_SQL } from "./schema.ts";
  * Phase 10.3 step 3 adds trading approval transports as version 4.
  * Phase 10.3 step 6 adds occurrence execution and reconciliation labels
  * as version 5. Those labels cite the existing ledger and reconciliation
- * enums. They are not a second state machine. */
-export const TRADING_STORE_SCHEMA_VERSION = 5 as const;
+ * enums. They are not a second state machine.
+ * Version 6 adds append-only trading memory and learning revisions. */
+export const TRADING_STORE_SCHEMA_VERSION = 6 as const;
 
-const TRADING_STORE_SCHEMA_VERSIONS = [0, 1, 2, 3, 4, TRADING_STORE_SCHEMA_VERSION] as const;
+const TRADING_STORE_SCHEMA_VERSIONS = [0, 1, 2, 3, 4, 5, TRADING_STORE_SCHEMA_VERSION] as const;
 
 export interface OpenTradingStoreInput {
   readonly path: string;
@@ -57,6 +59,7 @@ export interface TradingStore {
   readonly jobs: JobRepository;
   readonly occurrences: OccurrenceRepository;
   readonly approvals: ApprovalRepository;
+  readonly memory: MemoryRepository;
   close(): void;
 }
 
@@ -228,6 +231,7 @@ function store(db: DatabaseSync, path: string, environment: TradingEnvironment):
   const jobs = createJobRepository(db, environment);
   const occurrences = createOccurrenceRepository(db, environment);
   const approvals = createApprovalRepository(db, environment);
+  const memory = createMemoryRepository(db, environment);
   return {
     schemaVersion: TRADING_STORE_SCHEMA_VERSION,
     environment,
@@ -485,6 +489,7 @@ function store(db: DatabaseSync, path: string, environment: TradingEnvironment):
     jobs,
     occurrences,
     approvals,
+    memory,
     close() {
       db.close();
     },

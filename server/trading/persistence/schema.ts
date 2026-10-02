@@ -226,4 +226,22 @@ CREATE TABLE IF NOT EXISTS trading_approval_transports (
   decision_json TEXT
 );
 CREATE INDEX IF NOT EXISTS trading_approval_transports_binding ON trading_approval_transports(proposal_binding);
+CREATE TABLE IF NOT EXISTS trading_memory (
+  record_id TEXT PRIMARY KEY,
+  occurrence_id TEXT NOT NULL,
+  agent_run_id TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('FACT', 'INTERPRETATION', 'USER_FEEDBACK')),
+  revision INTEGER NOT NULL,
+  supersedes TEXT,
+  recorded_at TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS trading_memory_occurrence ON trading_memory(occurrence_id, revision);
+CREATE TABLE IF NOT EXISTS trading_learning (
+  revision_id TEXT PRIMARY KEY,
+  target TEXT NOT NULL,
+  recorded_at TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
 `;
