@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { adaptXauUsdChart } from "../../../../src/trading/kline-adapter.ts";
-import { projectDesk } from "../../desk/project.ts";
 import { readDeskChartCandles } from "../../desk/market.ts";
+import { projectDesk } from "../../desk/project.ts";
+import { XAUUSD_ENVIRONMENT_ENV } from "../../jobs/mount.ts";
 import {
   OANDA_ACCOUNT_ID_ENV,
   OANDA_API_TOKEN_ENV,
@@ -23,6 +24,7 @@ describe("OANDA desk chart path", () => {
       [OANDA_API_TOKEN_ENV]: TOKEN,
       [OANDA_ACCOUNT_ID_ENV]: ACCOUNT,
       [OANDA_ENVIRONMENT_ENV]: "live",
+      [XAUUSD_ENVIRONMENT_ENV]: "LIVE",
     });
     expect(read.ok).toBe(true);
     if (!read.ok) return;

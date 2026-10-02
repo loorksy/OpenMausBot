@@ -28,9 +28,12 @@ the same interface and calls the official OANDA v20 REST API:
 
 It is installed only by `installConfiguredOandaProvider` when
 `OMB_OANDA_API_TOKEN`, `OMB_OANDA_ACCOUNT_ID`, and `OMB_OANDA_ENVIRONMENT`
-are all present and valid. `OMB_OANDA_ENVIRONMENT` is `practice` or `live`.
-Practice maps to the PAPER trading slot and `https://api-fxpractice.oanda.com`.
-Live maps to the LIVE trading slot and `https://api-fxtrade.oanda.com`.
+are all present and valid, and `OMB_XAUUSD_ENVIRONMENT` names the same
+slot. `OMB_OANDA_ENVIRONMENT` is `practice` or `live`. Practice is accepted
+only with `OMB_XAUUSD_ENVIRONMENT=PAPER` and
+`https://api-fxpractice.oanda.com`. Live is accepted only with
+`OMB_XAUUSD_ENVIRONMENT=LIVE` and `https://api-fxtrade.oanda.com`. A missing
+trading environment, or any other pairing, leaves the provider uninstalled.
 The host is not an environment variable. There is no demo alias and no
 fallback from one environment to the other. A partial configuration leaves
 the provider slot empty. The token stays inside the provider. It is removed
@@ -42,7 +45,10 @@ The canonical symbol is `XAUUSD`. The only OANDA instrument requested is
 and ask and require OANDA status `tradeable`. Candles request `price=M` and
 read only the midpoint object. `D1` is OANDA granularity `D`. Incomplete
 candles (`complete` not `true`) are excluded. A missing `complete` flag
-rejects the payload. The adapter does not place orders and does not read
+rejects the payload. One candle read follows OANDA pages of at most 5000
+bars. After the first page, `includeFirst` is false so the cursor bar is not
+repeated. Four full pages that still end before the requested `to` fail the
+read closed instead of returning a shorter series. The adapter does not place orders and does not read
 MetaApi.
 
 ## Timeframes

@@ -151,7 +151,7 @@ export function readOandaMarketConfig(
   if (!isAcceptableToken(token)) return { ok: false, reason: "invalid_token" };
   const tradingEnvironment = TRADING_ENVIRONMENT[environment];
   const tradingSlot = env[XAUUSD_ENVIRONMENT_ENV];
-  if (tradingSlot !== undefined && tradingSlot !== "" && tradingSlot !== tradingEnvironment) {
+  if (tradingSlot !== tradingEnvironment) {
     return { ok: false, reason: "environment_mismatch" };
   }
   return {

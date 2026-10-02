@@ -41,6 +41,7 @@ function env(overrides: Record<string, string | undefined> = {}): Record<string,
     [OANDA_API_TOKEN_ENV]: TOKEN,
     [OANDA_ACCOUNT_ID_ENV]: ACCOUNT,
     [OANDA_ENVIRONMENT_ENV]: "live",
+    [XAUUSD_ENVIRONMENT_ENV]: "LIVE",
     ...overrides,
   };
 }
@@ -118,7 +119,7 @@ function hidden(value: unknown): void {
 
 describe("OANDA configuration", () => {
   it("accepts an explicit live configuration", () => {
-    const read = readOandaMarketConfig(env());
+    const read = readOandaMarketConfig(env({ [OANDA_ENVIRONMENT_ENV]: "live", [XAUUSD_ENVIRONMENT_ENV]: "LIVE" }));
     expect(read.ok).toBe(true);
     if (!read.ok) return;
     expect(read.config.environment).toBe("live");
@@ -151,6 +152,23 @@ describe("OANDA configuration", () => {
     expect(read).toEqual({ ok: false, reason });
     hidden(read);
     expect(installConfiguredOandaProvider(env(overrides))).toBe(false);
+    expect(readInstalledXauUsdMarketDataProvider()).toBeNull();
+  });
+
+  it("rejects every environment pairing except practice/PAPER and live/LIVE", () => {
+    const rejected = [
+      env({ [OANDA_ENVIRONMENT_ENV]: "practice", [XAUUSD_ENVIRONMENT_ENV]: "LIVE" }),
+      env({ [OANDA_ENVIRONMENT_ENV]: "live", [XAUUSD_ENVIRONMENT_ENV]: "PAPER" }),
+      env({ [XAUUSD_ENVIRONMENT_ENV]: "paper" }),
+      env({ [XAUUSD_ENVIRONMENT_ENV]: "" }),
+    ];
+    for (const record of rejected) {
+      expect(readOandaMarketConfig(record)).toEqual({ ok: false, reason: "environment_mismatch" });
+      expect(installConfiguredOandaProvider(record)).toBe(false);
+    }
+    const missing = env();
+    delete missing[XAUUSD_ENVIRONMENT_ENV];
+    expect(readOandaMarketConfig(missing)).toEqual({ ok: false, reason: "environment_mismatch" });
     expect(readInstalledXauUsdMarketDataProvider()).toBeNull();
   });
 
