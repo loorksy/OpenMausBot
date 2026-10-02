@@ -45,6 +45,7 @@ export interface TradingStore {
   readRequest(identity: string): PersistedExecutionRequest | null;
   readRequestById(executionRequestId: string): PersistedExecutionRequest | null;
   readEvents(): readonly TradingEvent[];
+  appendEvents(events: readonly TradingEvent[]): void;
   saveSnapshot(snapshot: BrokerAccountSnapshot): { readonly inserted: boolean };
   readSnapshot(snapshotId: string): BrokerAccountSnapshot | null;
   countBrokerOrders(snapshotId: string): number;
@@ -254,6 +255,31 @@ function store(db: DatabaseSync, path: string, environment: TradingEnvironment):
         "SELECT payload_json FROM trading_events ORDER BY at ASC, event_id ASC",
       ).all() as Array<{ payload_json: string }>;
       return rows.map((row) => seal(parseRecord<TradingEvent>(row.payload_json, isEvent)));
+    },
+    appendEvents(events) {
+      if (events.length === 0) return;
+      for (const event of events) {
+        assertNoSecretFields(event, "trading event");
+        if (event.environment !== environment) {
+          throw new TradingDomainError(
+            "trading_store_rejected",
+            "Trading event environment does not match the store partition. Failing closed.",
+          );
+        }
+      }
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        for (const event of events) insertEvent(db, event, environment);
+        db.exec("COMMIT");
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          // The event transaction is already closed.
+        }
+        if (error instanceof TradingDomainError) throw error;
+        throw new TradingDomainError("trading_store_rejected", "Trading store write failed. Failing closed.");
+      }
     },
     saveSnapshot(snapshot) {
       assertNoSecretFields(snapshot, "broker snapshot");

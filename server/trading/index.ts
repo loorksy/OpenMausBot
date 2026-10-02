@@ -10,7 +10,9 @@
  * A broker submit happens only through the execution boundary after
  * ELIGIBLE_FOR_EXECUTION. Reconciliation reads a broker snapshot and does
  * not submit. Phase 10.3 step 6 records that submission result and the
- * reconciliation run on the same trading occurrence. */
+ * reconciliation run on the same trading occurrence. Phase 10.4 records
+ * one monitoring cycle for that native routine turn. It does not schedule
+ * and it does not submit. */
 
 export * from "./domain/index.ts";
 export { foundationControl } from "./control/boundaries.ts";
@@ -97,6 +99,7 @@ export { evaluateXauUsdProposal, PROPOSAL_ENGINE_VERSION } from "./proposal/inde
 export type { ProposalEvaluation, ProposalOutcome } from "./proposal/index.ts";
 export { evaluateExecutionEligibility, ELIGIBILITY_HANDOFF_VERSION, submitEligibleExecution, EXECUTION_HANDOFF_VERSION } from "./eligibility/index.ts";
 export { executionReceiptFor, OCCURRENCE_LIFECYCLE_VERSION, reconcileOccurrenceLifecycle } from "./occurrence/lifecycle.ts";
+export { MONITORING_CYCLE_VERSION, runMonitoringCycle } from "./monitoring/cycle.ts";
 export type { EligibilityHandoff, EligibilityHandoffInput, EligibleExecutionResult } from "./eligibility/index.ts";
 export {
   assessApproval,

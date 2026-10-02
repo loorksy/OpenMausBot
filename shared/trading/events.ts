@@ -93,6 +93,11 @@ export const TRADING_EVENT_TYPES = [
   "agent.paused",
   "agent.resumed",
   "emergency.stop",
+  "monitoring.started",
+  "monitoring.completed",
+  "monitoring.blocked",
+  "account.observed",
+  "position.observed",
   "review.created",
   "memory.updated",
 ] as const;
