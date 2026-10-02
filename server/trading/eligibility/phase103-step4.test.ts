@@ -139,8 +139,21 @@ function kill(engaged: boolean, environment: TradingEnvironment = "SIMULATOR", a
   });
 }
 
+function storedKillSwitches(environment: unknown, state: unknown) {
+  const parsed = environment === "LIVE" || environment === "PAPER" || environment === "SIMULATOR" ? environment : "SIMULATOR";
+  const dir = mkdtempSync(join(tmpdir(), "xauusd-elig-switch-"));
+  dirs.push(dir);
+  const saved = openTradingStore({ path: join(dir, "trading.db"), environment: parsed });
+  try {
+    saved.killSwitches.write(parseKillSwitchState(state));
+  } catch {
+    // Missing and malformed switches stay unread.
+  }
+  return saved.killSwitches;
+}
+
 function orderInput(overrides: Partial<EligibilityHandoffInput> = {}): EligibilityHandoffInput {
-  return {
+  const draft = {
     instrument: "XAUUSD",
     decision: decision("LONG", 1990),
     orderIntent: intent("LONG", 2000, 1990),
@@ -166,6 +179,7 @@ function orderInput(overrides: Partial<EligibilityHandoffInput> = {}): Eligibili
     killSwitch: kill(false),
     ...overrides,
   };
+  return { ...draft, killSwitches: overrides.killSwitches ?? storedKillSwitches(draft.environment, draft.killSwitch) };
 }
 
 function preview(input: EligibilityHandoffInput): ProposalEvaluation {

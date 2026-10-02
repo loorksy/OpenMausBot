@@ -119,7 +119,8 @@ function room(overrides: Partial<TradingRoomInput> = {}) {
 describe("trading room projection", () => {
   it("does not treat a missing store as a flat position or a live market", () => {
     const projected = room({ source: "unconfigured", positionInputs: "unavailable", killSwitch: "missing" });
-    expect(projected.agentPresence).toBe("IDLE");
+    expect(projected.agentPresence).toBe("WAITING_FOR_DATA");
+    expect(projected.agentPresence).not.toBe("IDLE");
     expect(projected.position).toMatchObject({ availability: "NOT_AVAILABLE", state: null });
     expect(projected.nextAction.action).toBe("STORE_UNAVAILABLE");
     expect(projected.tradingCursor).toBeNull();
@@ -313,6 +314,7 @@ describe("trading room projection", () => {
     expect(loaded.source).toBe("unconfigured");
     expect(loaded.position.availability).toBe("NOT_AVAILABLE");
     expect(loaded.nextAction.action).toBe("STORE_UNAVAILABLE");
+    expect(loaded.agentPresence).not.toBe("IDLE");
     expect(loaded.market.provider).toBe("unconfigured");
     expect(loaded.market.observation?.provenance).toBe("UNAVAILABLE");
     expect(JSON.stringify(loaded)).not.toContain("token");

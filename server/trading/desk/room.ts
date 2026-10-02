@@ -280,7 +280,10 @@ export function projectTradingRoom(input: TradingRoomInput): TradingRoomState {
     instrument: "XAUUSD",
     tradingCursor: null,
     market: input.market,
-    agentPresence: input.source === "store" ? presence : "IDLE",
+    // A missing store is not idle work. WAITING_FOR_DATA is the existing
+    // presence; nextAction stays STORE_UNAVAILABLE so the client does not
+    // render IDLE.
+    agentPresence: input.source === "store" ? presence : "WAITING_FOR_DATA",
     decision: input.decision,
     decisionAvailability: input.decision === null ? "NOT_AVAILABLE" : "RECORD",
     risk: input.risk,

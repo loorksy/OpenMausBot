@@ -9,7 +9,7 @@ import {
   type ExecutionQuote,
   type ExecutionSubmitInput,
 } from "../execution/submit.ts";
-import { missingKillSwitchAuthority, type KillSwitchAuthority } from "../persistence/kill-switch.ts";
+import type { KillSwitchRepository } from "../persistence/kill-switch.ts";
 import { executionReceiptFor } from "../occurrence/lifecycle.ts";
 import type { OccurrenceRepository, TradingOccurrence } from "../persistence/occurrences.ts";
 import {
@@ -22,10 +22,11 @@ import {
  * Eligible proposal → existing execution boundary.
  * Version `xauusd-execution-handoff-1`.
  *
- * `submitAuthorizedExecution` remains the only submit path. It reserves the
- * existing execution identity, calls the existing MetaApi adapter, and
- * persists the existing attempt states. This module does not retry, does
- * not mint a provider turn id, and does not read broker credentials.
+ * `submitAuthorizedExecution` remains the only submit path. It re-reads the
+ * branded kill-switch repository from `openTradingStore` immediately before
+ * any broker call. A caller-supplied switch value cannot replace that row.
+ * This module does not retry, does not mint a provider turn id, and does
+ * not read broker credentials.
  */
 export const EXECUTION_HANDOFF_VERSION = "xauusd-execution-handoff-1" as const;
 
@@ -44,8 +45,8 @@ export interface EligibleExecutionInput extends EligibilityHandoffInput {
     readonly quantity: number;
   } | null;
   readonly paused?: boolean;
-  /** Store authority. A caller-supplied kill switch cannot replace it. */
-  readonly killSwitchAuthority?: KillSwitchAuthority;
+  /** Branded `store.killSwitches` from the same trading store. Not a caller value. */
+  readonly killSwitches: KillSwitchRepository;
 }
 
 export interface EligibleExecutionResult {
@@ -113,7 +114,7 @@ function executionInput(input: EligibleExecutionInput, eligibility: EligibilityH
     runtimeTurnId: input.runtimeTurnId,
     exitPosition: input.exitPosition ?? null,
     paused: input.paused === true,
-    killSwitchAuthority: input.killSwitchAuthority ?? missingKillSwitchAuthority(),
+    killSwitches: input.killSwitches,
   };
 }
 

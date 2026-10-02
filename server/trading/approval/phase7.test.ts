@@ -1,9 +1,11 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { AUTONOMY_NAMES, parseAutonomyState, type AutonomyLevel } from "../../../shared/trading/autonomy.ts";
 import { parseDecision, type DecisionDirection } from "../../../shared/trading/decision.ts";
+import type { TradingEnvironment } from "../../../shared/trading/environment.ts";
 import { TradingDomainError } from "../../../shared/trading/errors.ts";
 import { parseKillSwitchState, type KillSwitchState } from "../../../shared/trading/kill-switch.ts";
 import { parseOrderIntent, type OrderIntent, type OrderIntentDirection } from "../../../shared/trading/order-intent.ts";
@@ -17,6 +19,7 @@ import { proposalBinding } from "./binding.ts";
 import { APPROVAL_ENGINE_VERSION } from "./config.ts";
 import { APPROVAL_STATES } from "./result.ts";
 import { evaluateFireTimeGate, type FireTimeGateInput } from "../gate/evaluate.ts";
+import { openTradingStore } from "../persistence/store.ts";
 import { GATE_ENGINE_VERSION } from "../gate/config.ts";
 import { GATE_STATES, gateInfrastructureFact } from "../gate/result.ts";
 import { approvalInfrastructureFact } from "./result.ts";
@@ -254,8 +257,19 @@ function matchingFact(sim: Chain, patch: Partial<ApprovalFact> = {}): ApprovalFa
   };
 }
 
+function storedKillSwitches(environment: TradingEnvironment, state: unknown) {
+  const dir = mkdtempSync(join(tmpdir(), "xauusd-gate-switch-"));
+  const saved = openTradingStore({ path: join(dir, "trading.db"), environment });
+  try {
+    saved.killSwitches.write(parseKillSwitchState(state));
+  } catch {
+    // Missing and malformed switches stay unread.
+  }
+  return saved.killSwitches;
+}
+
 function gateInput(sim: Chain, approval: ReturnType<typeof assessApproval>, fact: unknown, extra: Record<string, unknown> = {}): FireTimeGateInput {
-  return {
+  const draft = {
     instrument: "XAUUSD",
     decision: sim.input.decision,
     orderIntent: sim.input.orderIntent,
@@ -288,6 +302,10 @@ function gateInput(sim: Chain, approval: ReturnType<typeof assessApproval>, fact
     runtimeTurnId: "turn-1",
     ...extra,
   } as FireTimeGateInput;
+  const environment = draft.environment === "LIVE" || draft.environment === "PAPER" || draft.environment === "SIMULATOR"
+    ? draft.environment
+    : "SIMULATOR";
+  return { ...draft, killSwitches: storedKillSwitches(environment, draft.killSwitch) };
 }
 
 describe("approval engine", () => {

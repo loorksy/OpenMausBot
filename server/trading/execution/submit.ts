@@ -9,7 +9,7 @@ import { TradingDomainError } from "../../../shared/trading/errors.ts";
 import type { TradingEvent, TradingEventType } from "../../../shared/trading/events.ts";
 import { assertNoSecretFields, recordIdSchema, utcTimestampSchema } from "../../../shared/trading/ids.ts";
 import { XAUUSD_INSTRUMENT } from "../../../shared/trading/instrument.ts";
-import type { KillSwitchAuthority } from "../persistence/kill-switch.ts";
+import { isAuthoritativeKillSwitchRepository, type KillSwitchRepository } from "../persistence/kill-switch.ts";
 import type { OrderIntent } from "../../../shared/trading/order-intent.ts";
 import type { ApprovalDecision } from "../approval/result.ts";
 import { proposalBinding } from "../approval/binding.ts";
@@ -50,7 +50,8 @@ export interface ExecutionSubmitInput {
   readonly quote: ExecutionQuote | null;
   /** Ignored for authorization. The stored switch is the only source. */
   readonly killSwitch: unknown;
-  readonly killSwitchAuthority?: KillSwitchAuthority;
+  /** Branded repository from `openTradingStore`. An unbranded reader cannot authorize. */
+  readonly killSwitches: KillSwitchRepository;
   readonly environment: unknown;
   readonly provenance: unknown;
   readonly requestedQuantity: number | null;
@@ -636,10 +637,12 @@ function readAuthoritativeSwitch(
   input: ExecutionSubmitInput,
   environment: TradingEnvironment,
 ): "open" | "KILL_SWITCH_ENGAGED" | "KILL_SWITCH_UNKNOWN" {
-  const authority = input.killSwitchAuthority;
-  if (authority == null) return "KILL_SWITCH_UNKNOWN";
+  const injected = (input as ExecutionSubmitInput & { killSwitchAuthority?: unknown }).killSwitchAuthority;
+  if (injected != null) return "KILL_SWITCH_UNKNOWN";
+  const repository = input.killSwitches;
+  if (!isAuthoritativeKillSwitchRepository(repository)) return "KILL_SWITCH_UNKNOWN";
   try {
-    const read = authority.read(environment, input.agentRunId);
+    const read = repository.authority().read(environment, input.agentRunId);
     if (read.status === "open") return "open";
     if (read.status === "engaged") return "KILL_SWITCH_ENGAGED";
     return "KILL_SWITCH_UNKNOWN";

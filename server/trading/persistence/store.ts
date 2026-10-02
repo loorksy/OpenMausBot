@@ -259,6 +259,8 @@ function store(db: DatabaseSync, path: string, environment: TradingEnvironment):
   const occurrences = createOccurrenceRepository(db, environment);
   const approvals = createApprovalRepository(db, environment);
   const memory = createMemoryRepository(db, environment);
+  // Authoritative kill switch. Gate evaluation and broker submission read this
+  // repository. A caller-supplied switch value cannot replace it.
   const killSwitches = createKillSwitchRepository(db, environment);
   const artifacts = createArtifactRepository(db, environment);
   const monitoringCycles = createMonitoringCycleRepository(db, environment);

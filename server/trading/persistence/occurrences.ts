@@ -565,7 +565,7 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
         if (input.risk !== null && riskDecisionId !== null) writeSealedRow(db, "trading_risk_decisions", "risk_decision_id", input.risk.id, input.risk.agentRunId, environment, input.risk);
         if (input.policy !== null && policyDecisionId !== null) writeSealedRow(db, "trading_policy_decisions", "policy_decision_id", input.policy.id, input.policy.agentRunId, environment, input.policy);
         if (input.gate !== null && gateDecisionId !== null) writeSealedRow(db, "trading_gate_decisions", "gate_decision_id", input.gate.id, input.gate.agentRunId, environment, input.gate);
-        db.prepare(`
+        const written = db.prepare(`
           UPDATE trading_occurrences
           SET decision_id = COALESCE(decision_id, ?),
               order_intent_id = COALESCE(order_intent_id, ?),
@@ -591,7 +591,21 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           input.agentRunId,
           environment,
         );
+        if (Number(written.changes) !== 1) {
+          throw new TradingDomainError("immutable_revision", "Authoritative trading records already differ. Failing closed.");
+        }
+        const stored = readOccurrenceRow(db, input.occurrenceId);
+        if (
+          stored === undefined
+          || stored.decision_id !== (current.decision_id ?? decisionId)
+          || stored.risk_decision_id !== (current.risk_decision_id ?? riskDecisionId)
+          || stored.policy_decision_id !== (current.policy_decision_id ?? policyDecisionId)
+          || stored.gate_decision_id !== (current.gate_decision_id ?? gateDecisionId)
+        ) {
+          throw new TradingDomainError("immutable_revision", "Authoritative trading records already differ. Failing closed.");
+        }
         db.exec("COMMIT");
+        return seal(fromRow(stored));
       } catch (error) {
         try {
           db.exec("ROLLBACK");
@@ -601,17 +615,6 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
         if (error instanceof TradingDomainError) throw error;
         throw new TradingDomainError("trading_store_rejected", "Authoritative trading records were rejected. Failing closed.");
       }
-      const stored = readOccurrenceRow(db, input.occurrenceId);
-      if (
-        stored === undefined
-        || stored.decision_id !== (current.decision_id ?? decisionId)
-        || stored.risk_decision_id !== (current.risk_decision_id ?? riskDecisionId)
-        || stored.policy_decision_id !== (current.policy_decision_id ?? policyDecisionId)
-        || stored.gate_decision_id !== (current.gate_decision_id ?? gateDecisionId)
-      ) {
-        throw new TradingDomainError("immutable_revision", "Authoritative trading records already differ. Failing closed.");
-      }
-      return seal(fromRow(stored));
     },
     attachExitExecution(input) {
       assertNoSecretFields(input, "exit execution");

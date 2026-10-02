@@ -191,7 +191,7 @@ function request(saved: TradingStore, transport: MetaApiTransport): EligibleExec
     approvalRequestId: "req-1",
     reconciliation: "RECONCILED",
     killSwitch: kill(false),
-    killSwitchAuthority: saved.killSwitches.authority(),
+    killSwitches: saved.killSwitches,
     provider: adapter(transport),
     ledger: saved.ledger,
     accountBinding: binding(),

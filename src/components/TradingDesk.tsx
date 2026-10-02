@@ -139,6 +139,7 @@ export function TradingDesk({ section }: { section: (typeof SECTIONS)[number] })
     return () => controller.abort();
   }, []);
   const room = payload?.room ?? null;
+  const recordedPresence = room !== null && room.source === "store" && room.nextAction.action !== "STORE_UNAVAILABLE";
   const chart = payload?.chart;
   const provenance = chart?.provenance ?? room?.market.observation?.provenance ?? "UNAVAILABLE";
   const candles = chart?.candles ?? EMPTY_CANDLES;
@@ -180,8 +181,8 @@ export function TradingDesk({ section }: { section: (typeof SECTIONS)[number] })
       </section>
       <section aria-label="Agent presence" className="mb-4">
         <h2 className="text-sm text-ink-secondary">حضور الوكيل</h2>
-        {room === null ? <p>الحضور غير متاح.</p> : <p>{label(PRESENCE_AR, room.agentPresence)}</p>}
-        <p dir="ltr">{room === null ? "UNAVAILABLE" : room.agentPresence}</p>
+        {recordedPresence ? <p>{label(PRESENCE_AR, room.agentPresence)}</p> : <p>الحضور غير متاح.</p>}
+        <p dir="ltr">{recordedPresence ? room.agentPresence : "UNAVAILABLE"}</p>
       </section>
       <section aria-label="Next action" className="mb-4">
         <h2 className="text-sm text-ink-secondary">الخطوة التالية</h2>

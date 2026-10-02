@@ -1,10 +1,12 @@
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
 import { AUTONOMY_NAMES, parseAutonomyState, type AutonomyLevel } from "../../../shared/trading/autonomy.ts";
 import { parseDecision, type DecisionDirection } from "../../../shared/trading/decision.ts";
+import type { TradingEnvironment } from "../../../shared/trading/environment.ts";
 import { TradingDomainError } from "../../../shared/trading/errors.ts";
 import { parseKillSwitchState, type KillSwitchState } from "../../../shared/trading/kill-switch.ts";
 import { parseOrderIntent, type OrderIntentDirection } from "../../../shared/trading/order-intent.ts";
@@ -17,7 +19,6 @@ import { evaluateXauUsdProposal, type ProposalInput } from "../proposal/evaluate
 import { createMemoryExecutionLedger } from "./ledger.ts";
 import { createMetaApiExecutionAdapter } from "./metaapi.ts";
 import type { MetaApiTransport, XauUsdExecutionProvider } from "./provider.ts";
-import { killSwitchAuthorityFromValue } from "../persistence/kill-switch.ts";
 import { openTradingStore } from "../persistence/store.ts";
 import { submitAuthorizedExecution, type ExecutionSubmitInput } from "./submit.ts";
 import { translateMetaApiTradeResponse } from "./translate.ts";
@@ -180,6 +181,16 @@ function prepared(overrides: Partial<ProposalInput> = {}) {
     requestedQuantity: input.requestedQuantity ?? null,
     evaluationRunId: "eval-1",
   });
+  const environment: TradingEnvironment = input.environment === "LIVE" || input.environment === "PAPER" || input.environment === "SIMULATOR"
+    ? input.environment
+    : "PAPER";
+  const dir = mkdtempSync(join(tmpdir(), "xauusd-exec-switch-"));
+  const store = openTradingStore({ path: join(dir, "trading.db"), environment });
+  try {
+    store.killSwitches.write(parseKillSwitchState(input.killSwitch));
+  } catch {
+    // Missing and malformed switches stay unread.
+  }
   const gateInput: FireTimeGateInput = {
     instrument: "XAUUSD",
     decision: input.decision,
@@ -195,6 +206,7 @@ function prepared(overrides: Partial<ProposalInput> = {}) {
     autonomy: input.autonomy,
     permissions: input.permissions,
     killSwitch: input.killSwitch,
+    killSwitches: store.killSwitches,
     approvalFact: null,
     requestedQuantity: input.requestedQuantity ?? null,
     riskConfig: input.riskConfig,
@@ -206,7 +218,7 @@ function prepared(overrides: Partial<ProposalInput> = {}) {
     evaluationRunId: "eval-1",
   };
   const gate = evaluateFireTimeGate(gateInput);
-  return { input, risk: evaluated.risk, policy: evaluated.policy, approval, gate };
+  return { input, risk: evaluated.risk, policy: evaluated.policy, approval, gate, store };
 }
 
 function provider(responses: Array<"accepted" | "rejected" | "unknown" | "filled">) {
@@ -245,6 +257,16 @@ function executionInput(
   ledger = createMemoryExecutionLedger(),
   extra: Record<string, unknown> = {},
 ): ExecutionSubmitInput {
+  if (Object.prototype.hasOwnProperty.call(extra, "killSwitch")) {
+    try {
+      ready.store.killSwitches.write(parseKillSwitchState(extra.killSwitch));
+    } catch {
+      const db = new DatabaseSync(ready.store.path);
+      db.prepare("DELETE FROM kill_switch_state").run();
+      db.close();
+    }
+  }
+  const { killSwitchAuthority: _authority, killSwitches: _switches, ...rest } = extra;
   return {
     instrument: "XAUUSD",
     decision: ready.input.decision,
@@ -255,7 +277,7 @@ function executionInput(
     gate: ready.gate,
     binding: binding(),
     quote: { bid: 4630, ask: 4633, snapshotId: "snap-1" },
-    killSwitch: ready.input.killSwitch,
+    killSwitch: Object.prototype.hasOwnProperty.call(extra, "killSwitch") ? extra.killSwitch : ready.input.killSwitch,
     environment: ready.input.environment,
     provenance: ready.input.provenance,
     requestedQuantity: ready.input.requestedQuantity ?? null,
@@ -264,10 +286,8 @@ function executionInput(
     submittedAt: AT,
     agentRunId: RUN,
     evaluationRunId: "eval-1",
-    ...extra,
-    killSwitchAuthority: (extra.killSwitchAuthority as ExecutionSubmitInput["killSwitchAuthority"]) ?? killSwitchAuthorityFromValue(
-      Object.prototype.hasOwnProperty.call(extra, "killSwitch") ? extra.killSwitch : ready.input.killSwitch,
-    ),
+    ...rest,
+    killSwitches: ready.store.killSwitches,
   } as ExecutionSubmitInput;
 }
 
@@ -578,16 +598,18 @@ describe("MetaApi response translation", () => {
 describe("authoritative kill switch", () => {
   it("does not let a caller-supplied open switch bypass a stored engaged or missing switch", async () => {
     const ready = prepared();
-    const dir = mkdtempSync(join(tmpdir(), "xauusd-kill-"));
-    const saved = openTradingStore({ path: join(dir, "trading.db"), environment: "PAPER" });
+    expect(ready.gate.state).toBe("ELIGIBLE_FOR_EXECUTION");
     const open = ready.input.killSwitch;
-    const missing = await submitAuthorizedExecution(executionInput(ready, provider(["accepted"]).provider, createMemoryExecutionLedger(), {
+    const db = new DatabaseSync(ready.store.path);
+    db.prepare("DELETE FROM kill_switch_state").run();
+    db.close();
+    const missing = await submitAuthorizedExecution({
+      ...executionInput(ready, provider(["accepted"]).provider),
       killSwitch: open,
-      killSwitchAuthority: saved.killSwitches.authority(),
-    }));
+    });
     expect(missing.reasons).toEqual(["KILL_SWITCH_UNKNOWN"]);
     expect(missing.brokerCalled).toBe(false);
-    saved.killSwitches.write(parseKillSwitchState({
+    ready.store.killSwitches.write(parseKillSwitchState({
       schemaVersion: 1,
       environment: "PAPER",
       engaged: true,
@@ -595,13 +617,13 @@ describe("authoritative kill switch", () => {
       updatedAt: AT,
       source: "operator",
     }));
-    const stopped = await submitAuthorizedExecution(executionInput(ready, provider(["accepted"]).provider, createMemoryExecutionLedger(), {
+    const stopped = await submitAuthorizedExecution({
+      ...executionInput(ready, provider(["accepted"]).provider),
       killSwitch: open,
-      killSwitchAuthority: saved.killSwitches.authority(),
-    }));
+    });
     expect(stopped.reasons).toEqual(["KILL_SWITCH_ENGAGED"]);
     expect(stopped.brokerCalled).toBe(false);
-    saved.killSwitches.write(parseKillSwitchState({
+    ready.store.killSwitches.write(parseKillSwitchState({
       schemaVersion: 1,
       environment: "PAPER",
       engaged: false,
@@ -609,13 +631,13 @@ describe("authoritative kill switch", () => {
       updatedAt: AT,
       source: "operator",
     }));
-    const allowed = await submitAuthorizedExecution(executionInput(ready, provider(["accepted"]).provider, createMemoryExecutionLedger(), {
+    const allowed = await submitAuthorizedExecution({
+      ...executionInput(ready, provider(["accepted"]).provider),
       killSwitch: null,
-      killSwitchAuthority: saved.killSwitches.authority(),
-    }));
+    });
     expect(allowed.state).toBe("SUBMISSION_ACCEPTED");
     expect(allowed.brokerCalled).toBe(true);
-    saved.close();
+    ready.store.close();
   });
 });
 

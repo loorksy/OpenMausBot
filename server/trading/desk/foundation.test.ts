@@ -306,12 +306,18 @@ function openApproval(store: TradingStore, occurrence: TradingOccurrence, reques
 
 describe("authoritative kill switch", () => {
   it("projects a missing switch as unknown and blocks execution", async () => {
-    const { env, store } = harness();
+    const { path, env, store } = harness();
     const occurrence = seed(store);
     const room = roomOf(env);
     expect(room.killSwitch.state).toBe("unknown");
     expect(room.nextAction.action).toBe("BLOCKED_KILL_SWITCH_UNKNOWN");
-    const blocked = await submitAuthorizedExecution(executionInput(occurrence.agentRunId, store, storedSwitch(occurrence.agentRunId, false)));
+    store.killSwitches.write(storedSwitch(occurrence.agentRunId, false));
+    const execution = executionInput(occurrence.agentRunId, store, storedSwitch(occurrence.agentRunId, false));
+    expect(execution.gate.state).toBe("ELIGIBLE_FOR_EXECUTION");
+    const db = new DatabaseSync(path);
+    db.prepare("DELETE FROM kill_switch_state").run();
+    db.close();
+    const blocked = await submitAuthorizedExecution(execution);
     expect(blocked.reasons).toEqual(["KILL_SWITCH_UNKNOWN"]);
     expect(blocked.brokerCalled).toBe(false);
   });
@@ -331,7 +337,8 @@ describe("authoritative kill switch", () => {
     const { path, env, store } = harness();
     const occurrence = seed(store);
     store.killSwitches.write(storedSwitch(occurrence.agentRunId, false));
-    store.close();
+    const liveExecution = executionInput(occurrence.agentRunId, store, storedSwitch(occurrence.agentRunId, false));
+    expect(liveExecution.gate.state).toBe("ELIGIBLE_FOR_EXECUTION");
     rewrite(
       path,
       "UPDATE kill_switch_state SET payload_json = ? WHERE agent_run_id = ?",
@@ -341,17 +348,21 @@ describe("authoritative kill switch", () => {
     const wrongEnvironment = roomOf(env);
     expect(wrongEnvironment.killSwitch.state).toBe("unknown");
     expect(wrongEnvironment.nextAction.action).toBe("BLOCKED_KILL_SWITCH_UNKNOWN");
+    const wrongEnvironmentSubmit = await submitAuthorizedExecution(liveExecution);
+    expect(wrongEnvironmentSubmit.reasons).toEqual(["KILL_SWITCH_UNKNOWN"]);
+    expect(wrongEnvironmentSubmit.brokerCalled).toBe(false);
+    store.killSwitches.write(storedSwitch(occurrence.agentRunId, false));
+    const execution = executionInput(occurrence.agentRunId, store, storedSwitch(occurrence.agentRunId, false));
+    expect(execution.gate.state).toBe("ELIGIBLE_FOR_EXECUTION");
     rewrite(
       path,
       "UPDATE kill_switch_state SET payload_json = ? WHERE agent_run_id = ?",
       canonicalJson(storedSwitch("run.other-agent", false)),
       occurrence.agentRunId,
     );
-    const again = openTradingStore({ path, environment: "PAPER" });
-    stores.push(again);
     const wrongAgent = roomOf(env);
     expect(wrongAgent.killSwitch.state).toBe("unknown");
-    const blocked = await submitAuthorizedExecution(executionInput(occurrence.agentRunId, again, storedSwitch(occurrence.agentRunId, false)));
+    const blocked = await submitAuthorizedExecution(execution);
     expect(blocked.reasons).toEqual(["KILL_SWITCH_UNKNOWN"]);
     expect(blocked.brokerCalled).toBe(false);
   });
@@ -359,11 +370,14 @@ describe("authoritative kill switch", () => {
   it("blocks an engaged switch and lets the same open row continue", async () => {
     const { env, store } = harness();
     const occurrence = seed(store);
+    store.killSwitches.write(storedSwitch(occurrence.agentRunId, false));
+    const execution = executionInput(occurrence.agentRunId, store, storedSwitch(occurrence.agentRunId, false));
+    expect(execution.gate.state).toBe("ELIGIBLE_FOR_EXECUTION");
     store.killSwitches.write(storedSwitch(occurrence.agentRunId, true));
     const engaged = roomOf(env);
     expect(engaged.killSwitch.state).toBe("engaged");
     expect(engaged.nextAction.action).toBe("BLOCKED_KILL_SWITCH");
-    const stopped = await submitAuthorizedExecution(executionInput(occurrence.agentRunId, store, storedSwitch(occurrence.agentRunId, false)));
+    const stopped = await submitAuthorizedExecution(execution);
     expect(stopped.reasons).toEqual(["KILL_SWITCH_ENGAGED"]);
     expect(stopped.brokerCalled).toBe(false);
     store.killSwitches.write(storedSwitch(occurrence.agentRunId, false));
@@ -374,6 +388,39 @@ describe("authoritative kill switch", () => {
     const continued = await submitAuthorizedExecution(executionInput(occurrence.agentRunId, store, null));
     expect(continued.reasons).not.toContain("KILL_SWITCH_UNKNOWN");
     expect(continued.reasons).not.toContain("KILL_SWITCH_ENGAGED");
+  });
+
+  it("keeps a historical eligible gate visible after the switch engages and still refuses the broker", async () => {
+    const { env, store } = harness();
+    const occurrence = seed(store);
+    store.killSwitches.write(storedSwitch(occurrence.agentRunId, false));
+    const execution = executionInput(occurrence.agentRunId, store, storedSwitch(occurrence.agentRunId, true));
+    expect(execution.gate.state).toBe("ELIGIBLE_FOR_EXECUTION");
+    if (execution.decision === null || execution.orderIntent === null) throw new Error("execution facts missing");
+    store.occurrences.attachAuthoritativeRecords({
+      occurrenceId: occurrence.occurrenceId,
+      agentRunId: occurrence.agentRunId,
+      environment: "PAPER",
+      decisionId: execution.decision.id,
+      orderIntentId: execution.orderIntent.id,
+      riskDecisionId: execution.risk.id,
+      policyDecisionId: execution.policy.id,
+      approvalId: null,
+      proposalBindingHash: null,
+      failureCode: null,
+      gateDecisionId: execution.gate.id,
+      decision: execution.decision,
+      risk: execution.risk,
+      policy: execution.policy,
+      gate: execution.gate,
+    });
+    store.killSwitches.write(storedSwitch(occurrence.agentRunId, true));
+    const room = roomOf(env);
+    expect(room.gate).toMatchObject({ id: execution.gate.id, state: "ELIGIBLE_FOR_EXECUTION" });
+    expect(room.killSwitch.state).toBe("engaged");
+    const blocked = await submitAuthorizedExecution(execution);
+    expect(blocked.reasons).toEqual(["KILL_SWITCH_ENGAGED"]);
+    expect(blocked.brokerCalled).toBe(false);
   });
 
   it("does not treat emergency.stop as the kill switch", () => {
@@ -448,6 +495,85 @@ describe("sealed decision chain", () => {
     })).toThrow(TradingDomainError);
     expect(store.artifacts.readDecision(made.id)).toBe("missing");
     expect(store.occurrences.readByOccurrenceId(occurrence.occurrenceId)?.decisionId).toBeNull();
+  });
+
+  it("rolls back every sealed body when the citation update changes no row", () => {
+    const { path, store } = harness();
+    const occurrence = seed(store);
+    const made = decision(occurrence.agentRunId);
+    const proposed = evaluateXauUsdProposal(proposalInput(occurrence.agentRunId, made));
+    const policy = proposed.policy;
+    if (policy === null) throw new Error("policy missing");
+    const gate = historicalGate(occurrence.agentRunId);
+    const db = new DatabaseSync(path);
+    db.exec(`
+      CREATE TRIGGER citation_zero BEFORE UPDATE ON trading_occurrences
+      BEGIN
+        SELECT RAISE(IGNORE);
+      END
+    `);
+    db.close();
+    expect(() => store.occurrences.attachAuthoritativeRecords({
+      occurrenceId: occurrence.occurrenceId,
+      agentRunId: occurrence.agentRunId,
+      environment: "PAPER",
+      decisionId: made.id,
+      orderIntentId: "intent-1",
+      riskDecisionId: proposed.risk.id,
+      policyDecisionId: policy.id,
+      approvalId: null,
+      proposalBindingHash: null,
+      failureCode: null,
+      gateDecisionId: gate.id,
+      decision: made,
+      risk: proposed.risk,
+      policy,
+      gate,
+    })).toThrow(TradingDomainError);
+    expect(store.artifacts.readDecision(made.id)).toBe("missing");
+    expect(store.artifacts.readRisk(proposed.risk.id)).toBe("missing");
+    expect(store.artifacts.readPolicy(policy.id)).toBe("missing");
+    expect(store.artifacts.readGate(gate.id)).toBe("missing");
+    const row = store.occurrences.readByOccurrenceId(occurrence.occurrenceId);
+    expect(row?.decisionId).toBeNull();
+    expect(row?.riskDecisionId).toBeNull();
+    expect(row?.policyDecisionId).toBeNull();
+    expect(row?.gateDecisionId).toBeNull();
+  });
+
+  it("rolls back a conflicting sealed revision and keeps the original body", () => {
+    const { store } = harness();
+    const occurrence = seed(store);
+    const made = decision(occurrence.agentRunId);
+    const proposed = evaluateXauUsdProposal(proposalInput(occurrence.agentRunId, made));
+    const policy = proposed.policy;
+    if (policy === null) throw new Error("policy missing");
+    const gate = historicalGate(occurrence.agentRunId);
+    const citation = {
+      occurrenceId: occurrence.occurrenceId,
+      agentRunId: occurrence.agentRunId,
+      environment: "PAPER" as const,
+      decisionId: made.id,
+      orderIntentId: "intent-1",
+      riskDecisionId: proposed.risk.id,
+      policyDecisionId: policy.id,
+      approvalId: null,
+      proposalBindingHash: null,
+      failureCode: null,
+      gateDecisionId: gate.id,
+      decision: made,
+      risk: proposed.risk,
+      policy,
+      gate,
+    };
+    store.occurrences.attachAuthoritativeRecords(citation);
+    expect(() => store.occurrences.attachAuthoritativeRecords({
+      ...citation,
+      decision: decision(occurrence.agentRunId, "LONG", "REVISED"),
+    })).toThrow(TradingDomainError);
+    expect(store.artifacts.readDecision(made.id)).toMatchObject({ thesis: "FROM-RECORD" });
+    expect(store.occurrences.readByOccurrenceId(occurrence.occurrenceId)?.decisionId).toBe(made.id);
+    expect(store.occurrences.readByOccurrenceId(occurrence.occurrenceId)?.gateDecisionId).toBe(gate.id);
   });
 
   it("fails closed when a cited record is missing", () => {
@@ -764,6 +890,16 @@ describe("projection authority", () => {
     ]);
     const lifecycle = readFileSync(new URL("../occurrence/lifecycle.ts", import.meta.url), "utf8");
     expect(lifecycle).toContain("snapshotId: input.snapshot.snapshotId");
+    const submit = readFileSync(new URL("../execution/submit.ts", import.meta.url), "utf8");
+    const gate = readFileSync(new URL("../gate/evaluate.ts", import.meta.url), "utf8");
+    const execute = readFileSync(new URL("../eligibility/execute.ts", import.meta.url), "utf8");
+    expect(submit).toContain("isAuthoritativeKillSwitchRepository");
+    expect(gate).toContain("readStoredSwitch");
+    expect(execute).toContain("killSwitches: input.killSwitches");
+    for (const source of [submit, gate, execute]) {
+      expect(source).not.toContain("killSwitchAuthorityFromValue");
+      expect(source).not.toContain("missingKillSwitchAuthority");
+    }
   });
 });
 
@@ -849,6 +985,7 @@ function executionInput(agentRunId: string, store: TradingStore, caller: KillSwi
     autonomy: autonomy(4, agentRunId),
     permissions: ["decision.propose", "intent.propose"],
     killSwitch: open,
+    killSwitches: store.killSwitches,
     approvalFact: null,
     requestedQuantity: 0.12,
     riskConfig: { version: "risk-v1", maxRiskPercent: 0.02, requireStop: true },
@@ -878,7 +1015,7 @@ function executionInput(agentRunId: string, store: TradingStore, caller: KillSwi
     },
     quote: { bid: 4630, ask: 4633, snapshotId: "snap-1" },
     killSwitch: caller,
-    killSwitchAuthority: store.killSwitches.authority(),
+    killSwitches: store.killSwitches,
     environment: "PAPER",
     provenance: "LIVE",
     requestedQuantity: 0.12,

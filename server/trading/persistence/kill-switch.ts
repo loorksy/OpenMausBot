@@ -23,10 +23,21 @@ export interface KillSwitchRepository {
   authority(): KillSwitchAuthority;
 }
 
+const AUTHORITATIVE_KILL_SWITCH = Symbol("openmausbot.authoritative-kill-switch");
+
+/** True only for a repository created by `createKillSwitchRepository`.
+ * That factory is called from `openTradingStore`. A caller-built reader,
+ * including one that reports open, does not pass. */
+export function isAuthoritativeKillSwitchRepository(value: unknown): value is KillSwitchRepository {
+  return value !== null
+    && typeof value === "object"
+    && (value as { [AUTHORITATIVE_KILL_SWITCH]?: unknown })[AUTHORITATIVE_KILL_SWITCH] === true;
+}
+
 const UNKNOWN = (reason: KillSwitchRead["reason"]): KillSwitchRead => ({ status: "unknown", reason, state: null });
 
 export function createKillSwitchRepository(db: DatabaseSync, environment: TradingEnvironment): KillSwitchRepository {
-  return {
+  const repository: KillSwitchRepository = {
     read(agentRunId) {
       return readRow(db, environment, agentRunId);
     },
@@ -50,20 +61,8 @@ export function createKillSwitchRepository(db: DatabaseSync, environment: Tradin
       };
     },
   };
-}
-
-/** Interprets one value with the same checks as a stored row. Production
- * execution uses the store repository, not this adapter. */
-export function killSwitchAuthorityFromValue(value: unknown): KillSwitchAuthority {
-  return {
-    read(environment, agentRunId) {
-      return classify(value, environment, agentRunId);
-    },
-  };
-}
-
-export function missingKillSwitchAuthority(): KillSwitchAuthority {
-  return { read: () => UNKNOWN("missing") };
+  Object.defineProperty(repository, AUTHORITATIVE_KILL_SWITCH, { value: true });
+  return repository;
 }
 
 function readRow(db: DatabaseSync, environment: TradingEnvironment, agentRunId: string): KillSwitchRead {

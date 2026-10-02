@@ -8,6 +8,7 @@ import { assessApproval, bindingFromProposal, type ApprovalAssessmentInput } fro
 import { proposalBinding } from "../approval/binding.ts";
 import type { ApprovalDecision, ApprovalState } from "../approval/result.ts";
 import { evaluateFireTimeGate, type FireTimeGateInput, type GateMarketFact } from "../gate/evaluate.ts";
+import type { KillSwitchRepository } from "../persistence/kill-switch.ts";
 import type { GateDecision, GateState } from "../gate/result.ts";
 import type { AuthoritativeReferenceWrite, EligibilityReferenceWrite, OccurrenceRepository } from "../persistence/occurrences.ts";
 import { evaluateXauUsdProposal, type ProposalEvaluation, type ProposalInput, type ProposalOutcome } from "../proposal/evaluate.ts";
@@ -65,6 +66,8 @@ export interface EligibilityHandoffInput {
   /** Existing reconciliation state. Absence fails closed. */
   readonly reconciliation: unknown;
   readonly killSwitch: unknown;
+  /** Branded store repository. The fire-time gate reads this, not `killSwitch`. */
+  readonly killSwitches?: KillSwitchRepository;
   readonly occurrence?: {
     readonly repository: Pick<OccurrenceRepository, "attachEligibilityReferences"> & Partial<Pick<OccurrenceRepository, "attachAuthoritativeRecords">>;
     readonly occurrenceId: string;
@@ -266,6 +269,7 @@ function gateInput(
     autonomy: input.autonomy,
     permissions: input.permissions,
     killSwitch: input.killSwitch,
+    killSwitches: input.killSwitches,
     approvalFact: input.approval,
     requestedQuantity: input.requestedQuantity ?? null,
     riskConfig: input.riskConfig,

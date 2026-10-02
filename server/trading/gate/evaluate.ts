@@ -10,7 +10,7 @@ import { TradingDomainError } from "../../../shared/trading/errors.ts";
 import type { TradingEvent, TradingEventType } from "../../../shared/trading/events.ts";
 import { assertNoSecretFields, recordIdSchema, utcTimestampSchema } from "../../../shared/trading/ids.ts";
 import { XAUUSD_INSTRUMENT } from "../../../shared/trading/instrument.ts";
-import { parseKillSwitchState } from "../../../shared/trading/kill-switch.ts";
+import { isAuthoritativeKillSwitchRepository, type KillSwitchRepository } from "../persistence/kill-switch.ts";
 import type { OrderIntent } from "../../../shared/trading/order-intent.ts";
 import { MARKET_FRESHNESS_STATES, type MarketFreshness } from "../../../shared/trading/snapshot.ts";
 import { TRADING_PERMISSIONS, type TradingPermission } from "../agent/catalog.ts";
@@ -49,7 +49,9 @@ export interface FireTimeGateInput {
   readonly provenance: unknown;
   readonly autonomy: unknown;
   readonly permissions: unknown;
+  /** Ignored. `killSwitches` is the only kill-switch source for this gate. */
   readonly killSwitch: unknown;
+  readonly killSwitches?: KillSwitchRepository;
   readonly approvalFact: unknown;
   readonly requestedQuantity: number | null;
   readonly riskConfig: unknown;
@@ -107,7 +109,7 @@ function decide(input: FireTimeGateInput): GateDecision {
     });
   }
   const configured: Outcome = { ...located, gateConfigVersion: gateConfig.config.version };
-  const kill = readSwitch(input.killSwitch, environment.data, input.agentRunId);
+  const kill = readStoredSwitch(input.killSwitches, environment.data, input.agentRunId);
   if (kill !== "open") return finish(input, { ...configured, state: "BLOCKED", reason: kill });
   const provenanceFailure = provenanceBlocks(environment.data, provenance.data);
   if (provenanceFailure !== null) return finish(input, { ...configured, state: "BLOCKED", reason: provenanceFailure });
@@ -367,15 +369,17 @@ function riskState(state: RiskDecision["state"]): GateState {
   return "REJECTED";
 }
 
-function readSwitch(
-  value: unknown,
+function readStoredSwitch(
+  repository: KillSwitchRepository | undefined,
   environment: TradingEnvironment,
   agentRunId: string,
 ): "open" | "KILL_SWITCH_ENGAGED" | "KILL_SWITCH_UNKNOWN" {
+  if (!isAuthoritativeKillSwitchRepository(repository)) return "KILL_SWITCH_UNKNOWN";
   try {
-    const state = parseKillSwitchState(value);
-    if (state.environment !== environment || state.agentRunId !== agentRunId) return "KILL_SWITCH_UNKNOWN";
-    return state.engaged ? "KILL_SWITCH_ENGAGED" : "open";
+    const read = repository.authority().read(environment, agentRunId);
+    if (read.status === "open") return "open";
+    if (read.status === "engaged") return "KILL_SWITCH_ENGAGED";
+    return "KILL_SWITCH_UNKNOWN";
   } catch {
     return "KILL_SWITCH_UNKNOWN";
   }

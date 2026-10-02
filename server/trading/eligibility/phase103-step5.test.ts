@@ -1,4 +1,5 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -245,15 +246,14 @@ function input(
     occurrence: { repository: saved.occurrences, occurrenceId },
     ...overrides,
   } as EligibleExecutionInput;
-  if (built.killSwitchAuthority === undefined) {
-    try {
-      saved.killSwitches.write(parseKillSwitchState(built.killSwitch));
-    } catch {
-      // Missing and malformed switches stay unread.
-    }
-    return { ...built, killSwitchAuthority: saved.killSwitches.authority() };
+  try {
+    saved.killSwitches.write(parseKillSwitchState(built.killSwitch));
+  } catch {
+    const db = new DatabaseSync(saved.path);
+    db.prepare("DELETE FROM kill_switch_state").run();
+    db.close();
   }
-  return built;
+  return { ...built, killSwitches: saved.killSwitches };
 }
 
 function quiet(direction: "NO_TRADE" | "WAIT") {

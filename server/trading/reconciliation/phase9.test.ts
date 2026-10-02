@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { AUTONOMY_NAMES, parseAutonomyState, type AutonomyLevel } from "../../../shared/trading/autonomy.ts";
 import { parseDecision, type DecisionDirection } from "../../../shared/trading/decision.ts";
+import type { TradingEnvironment } from "../../../shared/trading/environment.ts";
 import { TradingDomainError } from "../../../shared/trading/errors.ts";
 import { parseKillSwitchState, type KillSwitchState } from "../../../shared/trading/kill-switch.ts";
 import { parseOrderIntent, type OrderIntentDirection } from "../../../shared/trading/order-intent.ts";
@@ -13,7 +14,6 @@ import { foundationControl } from "../control/boundaries.ts";
 import { executionAttemptKey } from "../execution/identity.ts";
 import type { ExecutionAttemptRecord } from "../execution/ledger.ts";
 import type { XauUsdExecutionProvider } from "../execution/provider.ts";
-import { killSwitchAuthorityFromValue } from "../persistence/kill-switch.ts";
 import { submitAuthorizedExecution, type ExecutionSubmitInput } from "../execution/submit.ts";
 import { evaluateFireTimeGate, type FireTimeGateInput } from "../gate/evaluate.ts";
 import type { PersistedExecutionRequest } from "../persistence/record.ts";
@@ -187,6 +187,17 @@ function prepared(overrides: Partial<ProposalInput> = {}) {
     requestedQuantity: input.requestedQuantity ?? null,
     evaluationRunId: "eval-1",
   });
+  const environment: TradingEnvironment = input.environment === "LIVE" || input.environment === "PAPER" || input.environment === "SIMULATOR"
+    ? input.environment
+    : "PAPER";
+  const dir = mkdtempSync(join(tmpdir(), "xauusd-recon-switch-"));
+  dirs.push(dir);
+  const store = openTradingStore({ path: join(dir, "trading.db"), environment });
+  try {
+    store.killSwitches.write(parseKillSwitchState(input.killSwitch));
+  } catch {
+    // Missing and malformed switches stay unread.
+  }
   const gateInput: FireTimeGateInput = {
     instrument: "XAUUSD",
     decision: input.decision,
@@ -202,6 +213,7 @@ function prepared(overrides: Partial<ProposalInput> = {}) {
     autonomy: input.autonomy,
     permissions: input.permissions,
     killSwitch: input.killSwitch,
+    killSwitches: store.killSwitches,
     approvalFact: null,
     requestedQuantity: input.requestedQuantity ?? null,
     riskConfig: input.riskConfig,
@@ -212,7 +224,7 @@ function prepared(overrides: Partial<ProposalInput> = {}) {
     agentRunId: RUN,
     evaluationRunId: "eval-1",
   };
-  return { input, risk: evaluated.risk, policy: evaluated.policy, approval, gate: evaluateFireTimeGate(gateInput) };
+  return { input, risk: evaluated.risk, policy: evaluated.policy, approval, gate: evaluateFireTimeGate(gateInput), store };
 }
 
 function provider(kind: "accepted" | "unknown" | "filled" = "accepted", onSubmit?: () => void) {
@@ -255,6 +267,7 @@ function executionInput(ready: ReturnType<typeof prepared>, broker: XauUsdExecut
     binding: accountBinding(),
     quote: { bid: 4630, ask: 4633, snapshotId: "snap-1" },
     killSwitch: ready.input.killSwitch,
+    killSwitches: ready.store.killSwitches,
     environment: ready.input.environment,
     provenance: ready.input.provenance,
     requestedQuantity: ready.input.requestedQuantity ?? null,
@@ -263,7 +276,6 @@ function executionInput(ready: ReturnType<typeof prepared>, broker: XauUsdExecut
     submittedAt: AT,
     agentRunId: RUN,
     evaluationRunId: "eval-1",
-    killSwitchAuthority: killSwitchAuthorityFromValue(ready.input.killSwitch),
   };
 }
 

@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { AUTONOMY_NAMES, parseAutonomyState } from "../../../shared/trading/autonomy.ts";
@@ -9,7 +12,7 @@ import { assessApproval } from "../approval/assess.ts";
 import { metaApiExitBody } from "../execution/command.ts";
 import { createMemoryExecutionLedger } from "../execution/ledger.ts";
 import { createMetaApiExecutionAdapter } from "../execution/metaapi.ts";
-import { killSwitchAuthorityFromValue } from "../persistence/kill-switch.ts";
+import { openTradingStore } from "../persistence/store.ts";
 import { submitAuthorizedExecution } from "../execution/submit.ts";
 import { evaluateFireTimeGate } from "../gate/evaluate.ts";
 import { evaluateXauUsdProposal } from "../proposal/evaluate.ts";
@@ -130,6 +133,9 @@ function exitReady() {
     requestedQuantity: 0.12,
     evaluationRunId: "eval-1",
   });
+  const dir = mkdtempSync(join(tmpdir(), "xauusd-exit-switch-"));
+  const store = openTradingStore({ path: join(dir, "trading.db"), environment: "PAPER" });
+  store.killSwitches.write(input.killSwitch);
   const gate = evaluateFireTimeGate({
     instrument: "XAUUSD",
     decision,
@@ -145,6 +151,7 @@ function exitReady() {
     autonomy: input.autonomy,
     permissions: input.permissions,
     killSwitch: input.killSwitch,
+    killSwitches: store.killSwitches,
     approvalFact: null,
     requestedQuantity: 0.12,
     riskConfig: input.riskConfig,
@@ -155,7 +162,7 @@ function exitReady() {
     agentRunId: RUN,
     evaluationRunId: "eval-1",
   });
-  return { input, risk: evaluated.risk, policy: evaluated.policy, approval, gate };
+  return { input, risk: evaluated.risk, policy: evaluated.policy, approval, gate, store };
 }
 
 function binding() {
@@ -259,7 +266,7 @@ describe("phase 12 position lifecycle and exit", () => {
       binding: binding(),
       quote: { bid: 4630, ask: 4633, snapshotId: "snap-1" },
       killSwitch: ready.input.killSwitch,
-      killSwitchAuthority: killSwitchAuthorityFromValue(ready.input.killSwitch),
+      killSwitches: ready.store.killSwitches,
       environment: "PAPER",
       provenance: "LIVE",
       requestedQuantity: 0.12,
@@ -285,7 +292,7 @@ describe("phase 12 position lifecycle and exit", () => {
       binding: binding(),
       quote: { bid: 4630, ask: 4633, snapshotId: "snap-1" },
       killSwitch: ready.input.killSwitch,
-      killSwitchAuthority: killSwitchAuthorityFromValue(ready.input.killSwitch),
+      killSwitches: ready.store.killSwitches,
       environment: "PAPER",
       provenance: "LIVE",
       requestedQuantity: 0.12,
@@ -334,7 +341,7 @@ describe("phase 12 position lifecycle and exit", () => {
       ledger: createMemoryExecutionLedger(),
       submittedAt: AT,
       agentRunId: RUN,
-      killSwitchAuthority: killSwitchAuthorityFromValue(ready.input.killSwitch),
+      killSwitches: ready.store.killSwitches,
     };
     const ambiguous = await submitAuthorizedExecution({
       ...base,
@@ -358,24 +365,18 @@ describe("phase 12 position lifecycle and exit", () => {
     });
     expect(paused.reasons).toContain("PAUSED");
     expect(paused.brokerCalled).toBe(false);
+    const engaged = parseKillSwitchState({
+      schemaVersion: 1,
+      environment: "PAPER",
+      engaged: true,
+      agentRunId: RUN,
+      updatedAt: AT,
+      source: "operator",
+    });
+    ready.store.killSwitches.write(engaged);
     const stopped = await submitAuthorizedExecution({
       ...base,
-      killSwitch: parseKillSwitchState({
-        schemaVersion: 1,
-        environment: "PAPER",
-        engaged: true,
-        agentRunId: RUN,
-        updatedAt: AT,
-        source: "operator",
-      }),
-      killSwitchAuthority: killSwitchAuthorityFromValue(parseKillSwitchState({
-        schemaVersion: 1,
-        environment: "PAPER",
-        engaged: true,
-        agentRunId: RUN,
-        updatedAt: AT,
-        source: "operator",
-      })),
+      killSwitch: engaged,
       exitPosition: { positionId: "pos-9", direction: "LONG", quantity: 0.12 },
     });
     expect(stopped.reasons).toContain("KILL_SWITCH_ENGAGED");
