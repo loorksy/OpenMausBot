@@ -1320,6 +1320,25 @@ export function openThread(
   return false;
 }
 
+/** Open the thread already stored on a trading occurrence. A missing thread
+ * is a notice. This does not create a thread, a bot, or a trading chat. */
+export function openAttachedConversation(
+  dispatch: (action: Action) => void,
+  threadId: string,
+  state: ThreadOpeningState,
+): boolean {
+  const group = state.groups.find((candidate) =>
+    candidate.threadId === threadId || (candidate.tasks ?? []).some((task) => task.threadId === threadId));
+  const bot = state.bots.find((candidate) =>
+    candidate.threadId === threadId || (candidate.tasks ?? []).some((task) => task.threadId === threadId));
+  const ownerId = group?.id ?? bot?.id;
+  if (!ownerId) {
+    dispatch({ type: "notice", notice: { kind: "thread-gone", botName: null } });
+    return false;
+  }
+  return openThread(dispatch, { botId: ownerId, threadId }, state);
+}
+
 /** Retire the scrollback pages a thread has in flight: whatever they return
  * describes a transcript this client no longer holds. */
 function bumpTranscriptGeneration(state: AppState, threadId: string | undefined | null): AppState {

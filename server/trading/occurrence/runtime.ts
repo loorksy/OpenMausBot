@@ -8,6 +8,7 @@ import type { XauUsdTurnGrant } from "../agent/grant.ts";
 import type { XauUsdMarketDataProvider } from "../infrastructure/market_data/provider.ts";
 import { readXauUsdJobMount, XAUUSD_ENVIRONMENT_ENV, XAUUSD_STORE_PATH_ENV } from "../jobs/mount.ts";
 import { routineAgentRunId, routineOccurrenceId } from "./identity.ts";
+import type { TradingOccurrence } from "../persistence/occurrences.ts";
 import { openTradingStore, type TradingStore } from "../persistence/store.ts";
 
 /** Driver kinds whose turn loop is `createOpenAIChatRuntime`. The provider
@@ -144,7 +145,9 @@ export async function dispatchXauUsdRoutineTurn(input: XauUsdRoutineDispatch): P
   }
   const ticket = reserveXauUsdRoutineTurn(input);
   try {
-    await input.startTurn();
+    // A provider turn is already stored for this routine run. Starting
+    // another one would be a second native turn on the same occurrence.
+    if (!ticket.alreadyBound) await input.startTurn();
   } finally {
     ticket.release();
   }
@@ -198,11 +201,11 @@ export function assertXauUsdRuntimeGrant(value: XauUsdTurnGrant): XauUsdTurnGran
   return value;
 }
 
-function reserveXauUsdRoutineTurn(input: XauUsdRoutineDispatch): { release(): void } {
+function reserveXauUsdRoutineTurn(input: XauUsdRoutineDispatch): { release(): void; alreadyBound: boolean } {
   const marker = input.marker;
-  if (!marker) return { release() {} };
+  if (!marker) return { release() {}, alreadyBound: false };
   const mount = readXauUsdJobMount(input.env);
-  if (!mount.mounted) return { release() {} };
+  if (!mount.mounted) return { release() {}, alreadyBound: false };
   if (marker.environment !== mount.environment) {
     throw new TradingDomainError(
       "environment_isolation",
@@ -240,20 +243,12 @@ function reserveXauUsdRoutineTurn(input: XauUsdRoutineDispatch): { release(): vo
   }
   const store = openTradingStore({ path: mount.path, environment: mount.environment });
   try {
-    const row = store.occurrences.insertRoutineOccurrence({
-      routineId: input.routineId,
-      routineRunId: input.routineRunId,
-      threadId: input.threadId,
-      environment: mount.environment,
-      startedAt: input.startedAt,
-    });
-    if (row.providerTurnId !== null) {
-      throw new TradingDomainError("trading_store_rejected", "A new occurrence already has a provider turn. Failing closed.");
-    }
+    const row = reuseOrInsertOccurrence(store, input, mount.environment);
     if (row.occurrenceId !== routineOccurrenceId(input.routineRunId) || row.agentRunId !== routineAgentRunId(input.routineRunId)) {
       throw new TradingDomainError("agent_run_mismatch", "Trading occurrence identity was rejected. Failing closed.");
     }
-    pendingByThread.set(input.threadId, {
+    const alreadyBound = row.providerTurnId !== null;
+    if (!alreadyBound) pendingByThread.set(input.threadId, {
       routineId: input.routineId,
       routineRunId: input.routineRunId,
       threadId: input.threadId,
@@ -265,21 +260,71 @@ function reserveXauUsdRoutineTurn(input: XauUsdRoutineDispatch): { release(): vo
       provider: input.marketDataProvider,
       store,
     });
+    let released = false;
+    return {
+      alreadyBound,
+      release() {
+        if (released) return;
+        released = true;
+        const current = pendingByThread.get(input.threadId);
+        if (current?.store === store) pendingByThread.delete(input.threadId);
+        store.close();
+      },
+    };
   } catch (error) {
     store.close();
     pendingByThread.delete(input.threadId);
     throw error;
   }
-  let released = false;
-  return {
-    release() {
-      if (released) return;
-      released = true;
-      const current = pendingByThread.get(input.threadId);
-      if (current?.store === store) pendingByThread.delete(input.threadId);
-      store.close();
-    },
-  };
+}
+
+function reuseOrInsertOccurrence(
+  store: TradingStore,
+  input: XauUsdRoutineDispatch,
+  environment: TradingEnvironment,
+): TradingOccurrence {
+  const existing = store.occurrences.readByRoutineRun(input.routineRunId);
+  if (existing) {
+    assertReusableOccurrence(existing, input, environment);
+    return existing;
+  }
+  try {
+    const row = store.occurrences.insertRoutineOccurrence({
+      routineId: input.routineId,
+      routineRunId: input.routineRunId,
+      threadId: input.threadId,
+      environment,
+      startedAt: input.startedAt,
+    });
+    if (row.providerTurnId !== null) {
+      throw new TradingDomainError("trading_store_rejected", "A new occurrence already has a provider turn. Failing closed.");
+    }
+    return row;
+  } catch (error) {
+    const raced = store.occurrences.readByRoutineRun(input.routineRunId);
+    if (!raced) throw error;
+    assertReusableOccurrence(raced, input, environment);
+    return raced;
+  }
+}
+
+function assertReusableOccurrence(
+  row: TradingOccurrence,
+  input: XauUsdRoutineDispatch,
+  environment: TradingEnvironment,
+): void {
+  if (
+    row.routineId !== input.routineId
+    || row.threadId !== input.threadId
+    || row.environment !== environment
+    || row.occurrenceId !== routineOccurrenceId(input.routineRunId)
+    || row.agentRunId !== routineAgentRunId(input.routineRunId)
+  ) {
+    throw new TradingDomainError(
+      "trading_store_rejected",
+      "XAUUSD routine correlation did not match exactly one occurrence. Failing closed.",
+    );
+  }
 }
 
 function grantFromPending(

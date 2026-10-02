@@ -10,6 +10,7 @@ import {
   initialState,
   loadSnapshotBoundary,
   messageVersions,
+  openAttachedConversation,
   openNotificationTarget,
   openThread,
   persistBotUpdate,
@@ -866,6 +867,25 @@ describe("notification routing", () => {
     it("only notices when even the bot is gone", () => {
       const dispatch = vi.fn();
       expect(openThread(dispatch, { botId: "deleted-bot", threadId: "deleted-thread" }, { bots: named, groups })).toBe(false);
+      expect(dispatch.mock.calls.map(([action]) => action)).toEqual([
+        { type: "notice", notice: { kind: "thread-gone", botName: null } },
+      ]);
+    });
+
+    it("opens the stored trading thread and does not create another conversation", () => {
+      const dispatch = vi.fn();
+      expect(openAttachedConversation(dispatch, "detached-thread", { bots: named, groups })).toBe(true);
+      expect(dispatch.mock.calls.map(([action]) => action)).toEqual([
+        { type: "select", id: "bot-1" },
+        { type: "switchTask", botId: "bot-1", threadId: "detached-thread" },
+        { type: "revealThread", threadId: "detached-thread" },
+      ]);
+      expect(JSON.stringify(dispatch.mock.calls)).not.toContain("createTask");
+    });
+
+    it("does not attach an unknown thread or invent a bot for it", () => {
+      const dispatch = vi.fn();
+      expect(openAttachedConversation(dispatch, "other-thread", { bots: named, groups })).toBe(false);
       expect(dispatch.mock.calls.map(([action]) => action)).toEqual([
         { type: "notice", notice: { kind: "thread-gone", botName: null } },
       ]);

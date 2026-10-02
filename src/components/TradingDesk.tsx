@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { attachedConversationHref } from "../trading/conversation-link.ts";
 import { XauUsdChart } from "./XauUsdChart.tsx";
 import type { CanonicalCandle } from "../trading/kline-adapter.ts";
 
@@ -45,7 +46,15 @@ type Room = {
   timeline: { eventId: string; type: string; at: string; actor: string; monitoringDecision: string | null; failureCodes: string[] }[];
   memory: { recordId: string; kind: string; recordedAt: string; body: string }[];
   review: string;
-  attachedConversation: { availability: string; threadId: string | null; providerTurnId: string | null; occurrenceId: string | null; agentRunId: string | null };
+  attachedConversation: {
+    availability: string;
+    threadId: string | null;
+    runtimeThreadId: string | null;
+    providerTurnId: string | null;
+    runtimeTurnId: string | null;
+    occurrenceId: string | null;
+    agentRunId: string | null;
+  };
 };
 
 type DeskChart = { provenance: string; timeframe: string | null; candles: readonly CanonicalCandle[] };
@@ -259,8 +268,11 @@ export function TradingDesk({ section }: { section: (typeof SECTIONS)[number] })
       </section>
       <section aria-label="Conversation" className="mb-4">
         <h2 className="text-sm text-ink-secondary">المحادثة</h2>
-        {room === null ? <p>المحادثة غير متاحة.</p> : room.attachedConversation.availability === "ATTACHED" ? (
-          <p dir="ltr">thread {room.attachedConversation.threadId} · turn {room.attachedConversation.providerTurnId}</p>
+        {room === null ? <p>المحادثة غير متاحة.</p> : room.attachedConversation.availability === "ATTACHED" && room.attachedConversation.threadId ? (
+          <>
+            <p dir="ltr">thread {room.attachedConversation.threadId} · turn {room.attachedConversation.providerTurnId}</p>
+            <a className="underline" href={attachedConversationHref(room.attachedConversation.threadId)}>فتح المحادثة الأصلية</a>
+          </>
         ) : <p>لا محادثة مرتبطة. لن تُنشأ محادثة جديدة من هنا.</p>}
       </section>
     </main>

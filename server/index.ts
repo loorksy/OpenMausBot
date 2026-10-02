@@ -14881,7 +14881,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         provider: readInstalledXauUsdMarketDataProvider(),
         now,
       });
-      const room = loadTradingRoom(process.env, chart, now);
+      const requestedThreadId = url.searchParams.get("threadId");
+      const room = loadTradingRoom(process.env, chart, now, requestedThreadId);
       return json(res, 200, { ...roomLegacyFields(room), room, chart });
     }
     if (method === "POST" && path === "/api/trading/desk/approval") {

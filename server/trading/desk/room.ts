@@ -6,6 +6,7 @@ import type { ReconciliationState } from "../../../shared/trading/reconciliation
 import type { ExecutionState } from "../execution/result.ts";
 import { derivePositionLifecycle, type PositionLifecycleInput, type PositionLifecycleState } from "../lifecycle/position.ts";
 import type { MonitoringDecisionName } from "../monitoring/cycle.ts";
+import { correlateNativeConversation } from "../occurrence/correlation.ts";
 import type { OccurrenceDomainStatus } from "../occurrence/identity.ts";
 
 /** Presentation presence. EXECUTING is intentionally absent: the ledger
@@ -186,7 +187,11 @@ export interface TradingRoomState {
   readonly attachedConversation: {
     readonly availability: "ATTACHED" | "NOT_AVAILABLE";
     readonly threadId: string | null;
+    /** Same stored thread. Not a second conversation id. */
+    readonly runtimeThreadId: string | null;
     readonly providerTurnId: string | null;
+    /** Same stored provider turn. Not a second turn id. */
+    readonly runtimeTurnId: string | null;
     readonly occurrenceId: string | null;
     readonly agentRunId: string | null;
     readonly routineId: string | null;
@@ -241,6 +246,8 @@ export interface TradingRoomInput {
   } | null;
   readonly memory: TradingRoomState["memory"];
   readonly learning: TradingRoomState["learning"];
+  /** When set, a different thread stays unattached. It does not select another occurrence. */
+  readonly requestedThreadId?: string | null;
 }
 
 const MONITORING_DECISIONS = new Set([
@@ -272,7 +279,15 @@ export function projectTradingRoom(input: TradingRoomInput): TradingRoomState {
     autonomousOrdersBlocked,
   };
   const nextAction = projectNextAction(input, position, presence, monitoring, exitFlags, safety);
-  const threadId = input.occurrence?.threadId ?? null;
+  const attachedConversation = correlateNativeConversation({
+    threadId: input.occurrence?.threadId ?? null,
+    providerTurnId: input.occurrence?.providerTurnId ?? null,
+    occurrenceId: input.occurrence?.occurrenceId ?? null,
+    agentRunId: input.occurrence?.agentRunId ?? null,
+    routineId: input.occurrence?.routineId ?? null,
+    routineRunId: input.occurrence?.routineRunId ?? null,
+    requestedThreadId: input.requestedThreadId,
+  });
   return {
     source: input.source,
     serverNow: input.serverNow,
@@ -308,25 +323,7 @@ export function projectTradingRoom(input: TradingRoomInput): TradingRoomState {
     memory: input.memory,
     learning: input.learning,
     review: "NOT_AVAILABLE",
-    attachedConversation: threadId === null
-      ? {
-        availability: "NOT_AVAILABLE",
-        threadId: null,
-        providerTurnId: null,
-        occurrenceId: input.occurrence?.occurrenceId ?? null,
-        agentRunId: input.occurrence?.agentRunId ?? null,
-        routineId: input.occurrence?.routineId ?? null,
-        routineRunId: input.occurrence?.routineRunId ?? null,
-      }
-      : {
-        availability: "ATTACHED",
-        threadId,
-        providerTurnId: input.occurrence?.providerTurnId ?? null,
-        occurrenceId: input.occurrence?.occurrenceId ?? null,
-        agentRunId: input.occurrence?.agentRunId ?? null,
-        routineId: input.occurrence?.routineId ?? null,
-        routineRunId: input.occurrence?.routineRunId ?? null,
-      },
+    attachedConversation,
   };
 }
 

@@ -16,6 +16,7 @@ export function loadTradingRoom(
   env: Readonly<Record<string, string | undefined>>,
   chart: DeskChartSeries,
   serverNow: string,
+  requestedThreadId?: string | null,
 ): TradingRoomState {
   const health = tradingHealthReport(env);
   const provider = health.marketData === "live"
@@ -41,12 +42,12 @@ export function loadTradingRoom(
   try {
     mount = readXauUsdJobMount(env);
   } catch {
-    return projectTradingRoom(emptyInput("unavailable", serverNow, market));
+    return projectTradingRoom(emptyInput("unavailable", serverNow, market, requestedThreadId));
   }
-  if (!mount.mounted) return projectTradingRoom(emptyInput("unconfigured", serverNow, market));
+  if (!mount.mounted) return projectTradingRoom(emptyInput("unconfigured", serverNow, market, requestedThreadId));
   const store = openTradingStore({ path: mount.path, environment: mount.environment });
   try {
-    return projectTradingRoom(inputFromStore(store, serverNow, market));
+    return projectTradingRoom(inputFromStore(store, serverNow, market, requestedThreadId));
   } catch {
     return projectTradingRoom(emptyInput("unavailable", serverNow, market));
   } finally {
@@ -58,6 +59,7 @@ function emptyInput(
   source: "unconfigured" | "unavailable",
   serverNow: string,
   market: TradingRoomInput["market"],
+  requestedThreadId?: string | null,
 ): TradingRoomInput {
   return {
     source,
@@ -82,14 +84,20 @@ function emptyInput(
     monitoring: null,
     memory: [],
     learning: null,
+    requestedThreadId,
   };
 }
 
-function inputFromStore(store: TradingStore, serverNow: string, market: TradingRoomInput["market"]): TradingRoomInput {
+function inputFromStore(
+  store: TradingStore,
+  serverNow: string,
+  market: TradingRoomInput["market"],
+  requestedThreadId?: string | null,
+): TradingRoomInput {
   const events = store.readEvents();
   const jobs = store.jobs.listJobs();
   const job = jobs.find((item) => item.status === "PAUSED") ?? jobs[0] ?? null;
-  const occurrence = latestOccurrence(store, events);
+  const occurrence = currentOccurrence(store, events);
   const snapshot = occurrence?.snapshotId ? store.readSnapshot(occurrence.snapshotId) : null;
   const request = occurrence?.executionRequestId ? store.readRequestById(occurrence.executionRequestId) : null;
   const exit = exitFrom(store, occurrence);
@@ -148,7 +156,15 @@ function inputFromStore(store: TradingStore, serverNow: string, market: TradingR
     monitoring: monitoring.record,
     memory,
     learning: null,
+    requestedThreadId,
   };
+}
+
+function currentOccurrence(store: TradingStore, events: readonly TradingEvent[]) {
+  const cited = latestOccurrence(store, events);
+  if (cited) return cited;
+  const rows = store.occurrences.listOccurrences();
+  return rows.length === 0 ? null : rows[rows.length - 1] ?? null;
 }
 
 function latestOccurrence(store: TradingStore, events: readonly TradingEvent[]) {

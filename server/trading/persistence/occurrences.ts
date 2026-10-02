@@ -142,6 +142,8 @@ export interface OccurrenceRepository {
   insertRoutineOccurrence(input: RoutineOccurrenceInsert): TradingOccurrence;
   readByRoutineRun(routineRunId: string): TradingOccurrence | null;
   readByOccurrenceId(occurrenceId: string): TradingOccurrence | null;
+  /** Durable rows, oldest first. The room uses this when no trading event cites an occurrence. */
+  listOccurrences(): readonly TradingOccurrence[];
   attachProviderTurn(input: ProviderTurnAttach): TradingOccurrence;
   attachEligibilityReferences(input: EligibilityReferenceWrite): TradingOccurrence;
   attachAuthoritativeRecords(input: AuthoritativeReferenceWrite): TradingOccurrence;
@@ -299,6 +301,21 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
         WHERE occurrence_id = ?
       `).get(occurrenceId) as OccurrenceRow | undefined;
       return stored === undefined ? null : seal(fromRow(stored));
+    },
+    listOccurrences() {
+      const stored = db.prepare(`
+        SELECT
+          occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
+          instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
+          risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+          execution_state, reconciliation_state,
+          gate_decision_id, exit_execution_request_id, exit_execution_state, exit_broker_called,
+          exit_close_position_id, exit_quantity, exit_failure_code,
+          proposal_binding_hash, domain_status, failure_code, started_at, completed_at
+        FROM trading_occurrences
+        ORDER BY started_at, occurrence_id
+      `).all() as unknown as OccurrenceRow[];
+      return stored.map((row) => seal(fromRow(row)));
     },
     attachProviderTurn(input) {
       assertNoSecretFields(input, "trading occurrence");
