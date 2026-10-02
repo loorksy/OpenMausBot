@@ -5,9 +5,11 @@
  * trading ledger and reconciliation. The catalog is mounted by the existing
  * chat tool loop when a turn carries an opt-in grant. Replay changes market
  * time and market data only. Evaluation records that same tool session. The
- * model has no execution tool. A broker submit happens only through the
- * execution boundary after ELIGIBLE_FOR_EXECUTION. Reconciliation reads a
- * broker snapshot and does not submit. */
+ * model has no execution tool. Phase 10.3 step 4 sequences the existing
+ * risk, policy, approval, proposal-binding, and fire-time gate engines.
+ * A broker submit happens only through the execution boundary after
+ * ELIGIBLE_FOR_EXECUTION. Reconciliation reads a broker snapshot and does
+ * not submit. */
 
 export * from "./domain/index.ts";
 export { foundationControl } from "./control/boundaries.ts";
@@ -92,6 +94,8 @@ export {
 export type { PolicyConfig, PolicyDecision, PolicyState } from "./policy/index.ts";
 export { evaluateXauUsdProposal, PROPOSAL_ENGINE_VERSION } from "./proposal/index.ts";
 export type { ProposalEvaluation, ProposalOutcome } from "./proposal/index.ts";
+export { evaluateExecutionEligibility, ELIGIBILITY_HANDOFF_VERSION } from "./eligibility/index.ts";
+export type { EligibilityHandoff, EligibilityHandoffInput } from "./eligibility/index.ts";
 export {
   assessApproval,
   parseApprovalConfig,

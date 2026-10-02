@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-import type { ProvenanceStatus, TradingEnvironment } from "../../../shared/trading/environment.ts";
+import { tradingEnvironmentSchema, type ProvenanceStatus, type TradingEnvironment } from "../../../shared/trading/environment.ts";
 import { TradingDomainError } from "../../../shared/trading/errors.ts";
 import { assertNoSecretFields, recordIdSchema, seal, utcTimestampSchema } from "../../../shared/trading/ids.ts";
 import { XAUUSD_INSTRUMENT } from "../../../shared/trading/instrument.ts";
@@ -55,14 +55,42 @@ export interface ProviderTurnAttach {
   readonly providerTurnId: string;
 }
 
+/** Reference ids only. The occurrence does not store a second copy of the
+ * risk, policy, approval, or gate record. */
+export interface EligibilityReferenceWrite {
+  readonly occurrenceId: string;
+  readonly agentRunId: string;
+  readonly environment: TradingEnvironment;
+  readonly decisionId: string | null;
+  readonly orderIntentId: string | null;
+  readonly riskDecisionId: string | null;
+  readonly policyDecisionId: string | null;
+  readonly approvalId: string | null;
+  readonly proposalBindingHash: string | null;
+  readonly failureCode: string | null;
+}
+
 export interface OccurrenceRepository {
   insertRoutineOccurrence(input: RoutineOccurrenceInsert): TradingOccurrence;
   readByRoutineRun(routineRunId: string): TradingOccurrence | null;
   readByOccurrenceId(occurrenceId: string): TradingOccurrence | null;
   attachProviderTurn(input: ProviderTurnAttach): TradingOccurrence;
+  attachEligibilityReferences(input: EligibilityReferenceWrite): TradingOccurrence;
 }
 
 const ATTACH_KEYS = new Set(["routineId", "routineRunId", "threadId", "providerTurnId"]);
+const REFERENCE_KEYS = new Set([
+  "occurrenceId",
+  "agentRunId",
+  "environment",
+  "decisionId",
+  "orderIntentId",
+  "riskDecisionId",
+  "policyDecisionId",
+  "approvalId",
+  "proposalBindingHash",
+  "failureCode",
+]);
 
 /** Zero matches and more than one match both fail closed. */
 export function requireSingleCorrelation<T>(matches: readonly T[]): T {
@@ -239,7 +267,161 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
       }
       return seal(fromRow(stored));
     },
+    attachEligibilityReferences(input) {
+      assertNoSecretFields(input, "trading occurrence");
+      if (input === null || typeof input !== "object" || Array.isArray(input)) {
+        throw new TradingDomainError("trading_store_rejected", "Eligibility correlation was rejected. Failing closed.");
+      }
+      for (const key of Object.keys(input)) {
+        if (!REFERENCE_KEYS.has(key)) {
+          throw new TradingDomainError("trading_store_rejected", "Eligibility correlation contains an unsupported field. Failing closed.");
+        }
+      }
+      const decisionId = nullableReference(input.decisionId, "Decision id");
+      const orderIntentId = nullableReference(input.orderIntentId, "Order intent id");
+      const riskDecisionId = nullableReference(input.riskDecisionId, "Risk decision id");
+      const policyDecisionId = nullableReference(input.policyDecisionId, "Policy decision id");
+      const approvalId = nullableReference(input.approvalId, "Approval id");
+      const proposalBindingHash = nullableReference(input.proposalBindingHash, "Proposal binding");
+      const failureCode = nullableFailure(input.failureCode);
+      if (!recordIdSchema.safeParse(input.occurrenceId).success || !recordIdSchema.safeParse(input.agentRunId).success) {
+        throw new TradingDomainError("trading_store_rejected", "Eligibility correlation identity was rejected. Failing closed.");
+      }
+      const environment = tradingEnvironmentSchema.safeParse(input.environment);
+      if (!environment.success) {
+        throw new TradingDomainError("trading_store_rejected", "Eligibility correlation environment was rejected. Failing closed.");
+      }
+      const current = db.prepare(`
+        SELECT
+          occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
+          instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
+          risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+          proposal_binding_hash, domain_status, failure_code, started_at, completed_at
+        FROM trading_occurrences
+        WHERE occurrence_id = ?
+      `).get(input.occurrenceId) as OccurrenceRow | undefined;
+      if (current === undefined) {
+        throw new TradingDomainError("trading_store_rejected", "Eligibility correlation matched no occurrence. Failing closed.");
+      }
+      if (current.agent_run_id !== input.agentRunId) {
+        throw new TradingDomainError("agent_run_mismatch", "Eligibility correlation agent run does not match. Failing closed.");
+      }
+      if (current.environment !== environment.data) {
+        throw new TradingDomainError("trading_store_rejected", "Eligibility correlation environment does not match. Failing closed.");
+      }
+      agree(current.decision_id, decisionId);
+      agree(current.order_intent_id, orderIntentId);
+      agree(current.risk_decision_id, riskDecisionId);
+      agree(current.policy_decision_id, policyDecisionId);
+      agree(current.approval_id, approvalId);
+      agree(current.proposal_binding_hash, proposalBindingHash);
+      agree(current.failure_code, failureCode);
+      const preserved = {
+        providerTurnId: current.provider_turn_id,
+        executionRequestId: current.execution_request_id,
+        reconciliationRunId: current.reconciliation_run_id,
+        domainStatus: current.domain_status,
+      };
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        db.prepare(`
+          UPDATE trading_occurrences
+          SET decision_id = COALESCE(decision_id, ?),
+              order_intent_id = COALESCE(order_intent_id, ?),
+              risk_decision_id = COALESCE(risk_decision_id, ?),
+              policy_decision_id = COALESCE(policy_decision_id, ?),
+              approval_id = COALESCE(approval_id, ?),
+              proposal_binding_hash = COALESCE(proposal_binding_hash, ?),
+              failure_code = COALESCE(failure_code, ?)
+          WHERE occurrence_id = ?
+            AND agent_run_id = ?
+            AND environment = ?
+            AND (decision_id IS NULL OR decision_id = ?)
+            AND (order_intent_id IS NULL OR order_intent_id = ?)
+            AND (risk_decision_id IS NULL OR risk_decision_id = ?)
+            AND (policy_decision_id IS NULL OR policy_decision_id = ?)
+            AND (approval_id IS NULL OR approval_id = ?)
+            AND (proposal_binding_hash IS NULL OR proposal_binding_hash = ?)
+            AND (failure_code IS NULL OR failure_code = ?)
+        `).run(
+          decisionId,
+          orderIntentId,
+          riskDecisionId,
+          policyDecisionId,
+          approvalId,
+          proposalBindingHash,
+          failureCode,
+          input.occurrenceId,
+          input.agentRunId,
+          environment.data,
+          decisionId,
+          orderIntentId,
+          riskDecisionId,
+          policyDecisionId,
+          approvalId,
+          proposalBindingHash,
+          failureCode,
+        );
+        db.exec("COMMIT");
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          // The occurrence transaction is already closed.
+        }
+        if (error instanceof TradingDomainError) throw error;
+        throw new TradingDomainError("trading_store_rejected", "Eligibility correlation was rejected. Failing closed.");
+      }
+      const stored = db.prepare(`
+        SELECT
+          occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
+          instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
+          risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+          proposal_binding_hash, domain_status, failure_code, started_at, completed_at
+        FROM trading_occurrences
+        WHERE occurrence_id = ?
+      `).get(input.occurrenceId) as OccurrenceRow | undefined;
+      if (
+        stored === undefined
+        || stored.decision_id !== (current.decision_id ?? decisionId)
+        || stored.order_intent_id !== (current.order_intent_id ?? orderIntentId)
+        || stored.risk_decision_id !== (current.risk_decision_id ?? riskDecisionId)
+        || stored.policy_decision_id !== (current.policy_decision_id ?? policyDecisionId)
+        || stored.approval_id !== (current.approval_id ?? approvalId)
+        || stored.proposal_binding_hash !== (current.proposal_binding_hash ?? proposalBindingHash)
+        || stored.failure_code !== (current.failure_code ?? failureCode)
+        || stored.provider_turn_id !== preserved.providerTurnId
+        || stored.execution_request_id !== preserved.executionRequestId
+        || stored.reconciliation_run_id !== preserved.reconciliationRunId
+        || stored.domain_status !== preserved.domainStatus
+      ) {
+        throw new TradingDomainError("immutable_revision", "Eligibility correlation already differs. Failing closed.");
+      }
+      return seal(fromRow(stored));
+    },
   };
+}
+
+function nullableReference(value: string | null, label: string): string | null {
+  if (value === null) return null;
+  if (!recordIdSchema.safeParse(value).success) {
+    throw new TradingDomainError("trading_store_rejected", `${label} was rejected. Failing closed.`);
+  }
+  return value;
+}
+
+function nullableFailure(value: string | null): string | null {
+  if (value === null) return null;
+  if (!/^[A-Za-z0-9_]+$/.test(value) || value.length > 128) {
+    throw new TradingDomainError("trading_store_rejected", "Eligibility failure code was rejected. Failing closed.");
+  }
+  return value;
+}
+
+/** A null column may be filled once. A different value is an immutable revision. */
+function agree(current: string | null, next: string | null): void {
+  if (current === next || current === null) return;
+  throw new TradingDomainError("immutable_revision", "Eligibility correlation already differs. Failing closed.");
 }
 
 function occurrenceFromInsert(input: RoutineOccurrenceInsert, storeEnvironment: TradingEnvironment): TradingOccurrence {
