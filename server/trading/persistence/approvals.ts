@@ -59,6 +59,7 @@ export interface ApprovalRepository {
   insertOpen(input: ApprovalTransportInsert): ApprovalTransportRow;
   read(requestId: string): ApprovalTransportRow | null;
   readByBinding(proposalBinding: string): ApprovalTransportRow | null;
+  readForOccurrence(occurrenceId: string): { readonly open: ApprovalTransportRow | null; readonly settled: ApprovalTransportRow | null; readonly ambiguous: boolean };
   commitResolution(input: ApprovalResolutionWrite): ApprovalTransportRow;
 }
 
@@ -170,6 +171,14 @@ export function createApprovalRepository(db: DatabaseSync, environment: TradingE
       if (!recordIdSchema.safeParse(proposalBinding).success) return null;
       const row = db.prepare(`${SELECT} WHERE proposal_binding = ?`).get(proposalBinding) as TransportSql | undefined;
       return row ? fromRow(row) : null;
+    },
+    readForOccurrence(occurrenceId) {
+      if (!recordIdSchema.safeParse(occurrenceId).success) return { open: null, settled: null, ambiguous: true };
+      const rows = (db.prepare(`${SELECT} WHERE occurrence_id = ? ORDER BY opened_at ASC`).all(occurrenceId) as unknown as TransportSql[]).map(fromRow);
+      const open = rows.filter((row) => row.resolvedFingerprint === null);
+      const settled = rows.filter((row) => row.decisionJson !== null);
+      if (open.length > 1 || settled.length > 1) return { open: null, settled: null, ambiguous: true };
+      return { open: open[0] ?? null, settled: settled[0] ?? null, ambiguous: false };
     },
     commitResolution(input) {
       assertNoSecretFields(input, "trading approval");

@@ -142,6 +142,12 @@ function position(positionId: string, volume = 0.12, symbol = "XAUUSD") {
 
 function cycle(saved: TradingStore, overrides: Partial<MonitoringCycleInput> = {}, occurrenceId?: string) {
   const id = occurrenceId ?? saved.occurrences.readByRoutineRun(ROUTINE_RUN)?.occurrenceId ?? bind(saved);
+  const switchValue = overrides.killSwitch ?? kill(false);
+  try {
+    saved.killSwitches.write(parseKillSwitchState(switchValue));
+  } catch {
+    // A missing or malformed switch stays unread. The cycle fails closed.
+  }
   return runMonitoringCycle({
     store: saved,
     occurrenceId: id,
@@ -227,6 +233,15 @@ describe("phase 10.4 native monitoring", () => {
     expect(occurrence?.providerTurnId).toBe(TURN);
     expect(occurrence?.threadId).toBe("thread-from-store");
     expect(occurrence?.routineId).toBe(routine.id);
+    const observedSwitch = parseKillSwitchState({
+      schemaVersion: 1,
+      environment: "PAPER",
+      engaged: false,
+      agentRunId: occurrence?.agentRunId ?? "",
+      updatedAt: AT,
+      source: "operator",
+    });
+    saved.killSwitches.write(observedSwitch);
     const observed = runMonitoringCycle({
       store: saved,
       occurrenceId: occurrence?.occurrenceId ?? "",
@@ -235,14 +250,7 @@ describe("phase 10.4 native monitoring", () => {
       market: market(),
       account: account(),
       snapshot: book(),
-      killSwitch: parseKillSwitchState({
-        schemaVersion: 1,
-        environment: "PAPER",
-        engaged: false,
-        agentRunId: occurrence?.agentRunId ?? "",
-        updatedAt: AT,
-        source: "operator",
-      }),
+      killSwitch: observedSwitch,
       paused: false,
       decision: "CONTINUE_MONITORING",
       riskConfig: { version: "risk-v1", maxRiskPercent: 0.02, requireStop: true },

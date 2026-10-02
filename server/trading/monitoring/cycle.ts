@@ -5,7 +5,6 @@ import { TradingDomainError } from "../../../shared/trading/errors.ts";
 import type { TradingEvent, TradingEventType } from "../../../shared/trading/events.ts";
 import { assertNoSecretFields, recordIdSchema, seal, utcTimestampSchema } from "../../../shared/trading/ids.ts";
 import { XAUUSD_INSTRUMENT } from "../../../shared/trading/instrument.ts";
-import { parseKillSwitchState } from "../../../shared/trading/kill-switch.ts";
 import { parseOrderIntent, type OrderIntent } from "../../../shared/trading/order-intent.ts";
 import type { TradingPermission } from "../../../shared/trading/permissions.ts";
 import type { ReconciliationState } from "../../../shared/trading/reconciliation.ts";
@@ -25,8 +24,8 @@ import type { BrokerAccountSnapshot, BrokerPositionObservation } from "../reconc
  * Version `xauusd-monitoring-cycle-1`.
  *
  * The caller is RoutineManager's turn. This module does not schedule, poll,
- * or submit. An exit proposal stops before the execution boundary because
- * that boundary can only represent a pending entry, not a position close.
+ * or submit. An exit proposal stays non-executable. A close, when one is
+ * authorized later, uses authorizeExit and POSITION_CLOSE_ID.
  */
 export const MONITORING_CYCLE_VERSION = "xauusd-monitoring-cycle-1" as const;
 
@@ -188,7 +187,7 @@ export function runMonitoringCycle(input: MonitoringCycleInput): MonitoringCycle
   const health = brokerHealth(input.snapshot, occurrence.environment);
   const positions = readPositions(input.snapshot, occurrence.environment);
   const reconciliationState = occurrence.reconciliationState;
-  const kill = readKill(input.killSwitch, occurrence.environment, occurrence.agentRunId);
+  const kill = readStoredKill(input.store, occurrence.environment, occurrence.agentRunId);
   const blocks = new Set<string>();
   if (!market.usable) blocks.add(market.failure);
   if (market.provenance === "STALE" || market.agedOut) blocks.add("MARKET_DATA_STALE");
@@ -280,7 +279,7 @@ export function runMonitoringCycle(input: MonitoringCycleInput): MonitoringCycle
     events,
   });
   assertNoSecretFields(cycle, "monitoring cycle");
-  input.store.appendEvents(events);
+  input.store.monitoringCycles.record(cycle, events);
   return cycle;
 }
 
@@ -382,18 +381,14 @@ function usablePosition(position: BrokerPositionObservation): boolean {
     && position.volume > 0;
 }
 
-function readKill(
-  value: unknown,
+function readStoredKill(
+  store: MonitoringCycleInput["store"],
   environment: TradingOccurrence["environment"],
   agentRunId: string,
 ): "open" | "engaged" | "unknown" {
-  try {
-    const state = parseKillSwitchState(value);
-    if (state.environment !== environment || state.agentRunId !== agentRunId) return "unknown";
-    return state.engaged ? "engaged" : "open";
-  } catch {
-    return "unknown";
-  }
+  if (store.environment !== environment) return "unknown";
+  const read = store.killSwitches.read(agentRunId);
+  return read.status === "open" || read.status === "engaged" ? read.status : "unknown";
 }
 
 function exitFor(

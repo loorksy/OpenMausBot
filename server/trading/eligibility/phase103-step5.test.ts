@@ -214,7 +214,7 @@ function input(
 ): EligibleExecutionInput {
   const occurrenceId = bind ? bindOccurrence(saved) : routineOccurrenceId(ROUTINE_RUN);
   const broker = countingProvider();
-  return {
+  const built = {
     instrument: "XAUUSD",
     decision: decision("LONG", 4624.5),
     orderIntent: intent("LONG", 4632.5, 4624.5),
@@ -244,7 +244,16 @@ function input(
     accountBinding: binding(),
     occurrence: { repository: saved.occurrences, occurrenceId },
     ...overrides,
-  };
+  } as EligibleExecutionInput;
+  if (built.killSwitchAuthority === undefined) {
+    try {
+      saved.killSwitches.write(parseKillSwitchState(built.killSwitch));
+    } catch {
+      // Missing and malformed switches stay unread.
+    }
+    return { ...built, killSwitchAuthority: saved.killSwitches.authority() };
+  }
+  return built;
 }
 
 function quiet(direction: "NO_TRADE" | "WAIT") {

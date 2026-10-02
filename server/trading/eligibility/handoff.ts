@@ -9,7 +9,7 @@ import { proposalBinding } from "../approval/binding.ts";
 import type { ApprovalDecision, ApprovalState } from "../approval/result.ts";
 import { evaluateFireTimeGate, type FireTimeGateInput, type GateMarketFact } from "../gate/evaluate.ts";
 import type { GateDecision, GateState } from "../gate/result.ts";
-import type { EligibilityReferenceWrite, OccurrenceRepository } from "../persistence/occurrences.ts";
+import type { AuthoritativeReferenceWrite, EligibilityReferenceWrite, OccurrenceRepository } from "../persistence/occurrences.ts";
 import { evaluateXauUsdProposal, type ProposalEvaluation, type ProposalInput, type ProposalOutcome } from "../proposal/evaluate.ts";
 
 /**
@@ -66,7 +66,7 @@ export interface EligibilityHandoffInput {
   readonly reconciliation: unknown;
   readonly killSwitch: unknown;
   readonly occurrence?: {
-    readonly repository: Pick<OccurrenceRepository, "attachEligibilityReferences">;
+    readonly repository: Pick<OccurrenceRepository, "attachEligibilityReferences"> & Partial<Pick<OccurrenceRepository, "attachAuthoritativeRecords">>;
     readonly occurrenceId: string;
   } | null;
 }
@@ -350,7 +350,19 @@ function publish(
       proposalBindingHash: result.binding,
       failureCode: eligible ? null : result.reasons[0] ?? null,
     };
-    occurrence.repository.attachEligibilityReferences(reference);
+    if (occurrence.repository.attachAuthoritativeRecords) {
+      const authoritative: AuthoritativeReferenceWrite = {
+        ...reference,
+        gateDecisionId: result.gate?.id ?? null,
+        decision: input.decision,
+        risk: result.proposal?.risk ?? null,
+        policy: result.proposal?.policy ?? null,
+        gate: result.gate,
+      };
+      occurrence.repository.attachAuthoritativeRecords(authoritative);
+    } else {
+      occurrence.repository.attachEligibilityReferences(reference);
+    }
   }
   return result;
 }

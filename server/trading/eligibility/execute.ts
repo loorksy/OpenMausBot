@@ -9,6 +9,7 @@ import {
   type ExecutionQuote,
   type ExecutionSubmitInput,
 } from "../execution/submit.ts";
+import { missingKillSwitchAuthority, type KillSwitchAuthority } from "../persistence/kill-switch.ts";
 import { executionReceiptFor } from "../occurrence/lifecycle.ts";
 import type { OccurrenceRepository, TradingOccurrence } from "../persistence/occurrences.ts";
 import {
@@ -33,7 +34,7 @@ export interface EligibleExecutionInput extends EligibilityHandoffInput {
   readonly ledger: ExecutionLedger;
   readonly accountBinding: unknown;
   readonly occurrence?: {
-    readonly repository: Pick<OccurrenceRepository, "attachEligibilityReferences" | "readByOccurrenceId" | "attachExecutionReceipt">;
+    readonly repository: Pick<OccurrenceRepository, "attachEligibilityReferences" | "readByOccurrenceId" | "attachExecutionReceipt"> & Partial<Pick<OccurrenceRepository, "attachExitExecution">>;
     readonly occurrenceId: string;
   } | null;
   /** Broker position for an EXIT_EXISTING_POSITION handoff. Absent for an entry. */
@@ -43,6 +44,8 @@ export interface EligibleExecutionInput extends EligibilityHandoffInput {
     readonly quantity: number;
   } | null;
   readonly paused?: boolean;
+  /** Store authority. A caller-supplied kill switch cannot replace it. */
+  readonly killSwitchAuthority?: KillSwitchAuthority;
 }
 
 export interface EligibleExecutionResult {
@@ -110,6 +113,7 @@ function executionInput(input: EligibleExecutionInput, eligibility: EligibilityH
     runtimeTurnId: input.runtimeTurnId,
     exitPosition: input.exitPosition ?? null,
     paused: input.paused === true,
+    killSwitchAuthority: input.killSwitchAuthority ?? missingKillSwitchAuthority(),
   };
 }
 
@@ -147,6 +151,22 @@ function authorizedOccurrence(input: EligibleExecutionInput, eligibility: Eligib
 function recordReceipt(input: EligibleExecutionInput, row: TradingOccurrence, execution: ExecutionDecision): void {
   const occurrence = input.occurrence;
   if (occurrence == null) return;
+  const attachExit = occurrence.repository.attachExitExecution;
+  if (input.decision?.direction === "EXIT_EXISTING_POSITION" && attachExit !== undefined) {
+    if (row.exitExecutionRequestId !== null && row.exitExecutionRequestId !== execution.id) return;
+    attachExit({
+      occurrenceId: row.occurrenceId,
+      agentRunId: row.agentRunId,
+      environment: row.environment,
+      executionRequestId: execution.id,
+      executionState: execution.state,
+      brokerCalled: execution.brokerCalled,
+      closePositionId: execution.closePositionId,
+      quantity: execution.quantity,
+      failureCode: execution.state === "SUBMISSION_ACCEPTED" || execution.state === "FILL_REPORTED" ? null : execution.reasons[0] ?? null,
+    });
+    return;
+  }
   if (row.executionRequestId !== null && row.executionRequestId !== execution.id) return;
   const receipt = executionReceiptFor(row, execution);
   if (receipt === null) return;

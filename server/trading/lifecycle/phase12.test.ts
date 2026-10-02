@@ -9,6 +9,7 @@ import { assessApproval } from "../approval/assess.ts";
 import { metaApiExitBody } from "../execution/command.ts";
 import { createMemoryExecutionLedger } from "../execution/ledger.ts";
 import { createMetaApiExecutionAdapter } from "../execution/metaapi.ts";
+import { killSwitchAuthorityFromValue } from "../persistence/kill-switch.ts";
 import { submitAuthorizedExecution } from "../execution/submit.ts";
 import { evaluateFireTimeGate } from "../gate/evaluate.ts";
 import { evaluateXauUsdProposal } from "../proposal/evaluate.ts";
@@ -258,6 +259,7 @@ describe("phase 12 position lifecycle and exit", () => {
       binding: binding(),
       quote: { bid: 4630, ask: 4633, snapshotId: "snap-1" },
       killSwitch: ready.input.killSwitch,
+      killSwitchAuthority: killSwitchAuthorityFromValue(ready.input.killSwitch),
       environment: "PAPER",
       provenance: "LIVE",
       requestedQuantity: 0.12,
@@ -283,6 +285,7 @@ describe("phase 12 position lifecycle and exit", () => {
       binding: binding(),
       quote: { bid: 4630, ask: 4633, snapshotId: "snap-1" },
       killSwitch: ready.input.killSwitch,
+      killSwitchAuthority: killSwitchAuthorityFromValue(ready.input.killSwitch),
       environment: "PAPER",
       provenance: "LIVE",
       requestedQuantity: 0.12,
@@ -331,6 +334,7 @@ describe("phase 12 position lifecycle and exit", () => {
       ledger: createMemoryExecutionLedger(),
       submittedAt: AT,
       agentRunId: RUN,
+      killSwitchAuthority: killSwitchAuthorityFromValue(ready.input.killSwitch),
     };
     const ambiguous = await submitAuthorizedExecution({
       ...base,
@@ -364,6 +368,14 @@ describe("phase 12 position lifecycle and exit", () => {
         updatedAt: AT,
         source: "operator",
       }),
+      killSwitchAuthority: killSwitchAuthorityFromValue(parseKillSwitchState({
+        schemaVersion: 1,
+        environment: "PAPER",
+        engaged: true,
+        agentRunId: RUN,
+        updatedAt: AT,
+        source: "operator",
+      })),
       exitPosition: { positionId: "pos-9", direction: "LONG", quantity: 0.12 },
     });
     expect(stopped.reasons).toContain("KILL_SWITCH_ENGAGED");

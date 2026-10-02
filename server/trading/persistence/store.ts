@@ -11,8 +11,11 @@ import type { ExecutionAttemptRecord, ExecutionLedger } from "../execution/ledge
 import type { ReconciliationResult } from "../reconciliation/engine.ts";
 import type { BrokerAccountSnapshot } from "../reconciliation/snapshot.ts";
 import { canonicalJson } from "../replay/hash.ts";
+import { createArtifactRepository, type ArtifactRepository } from "./artifacts.ts";
 import { createJobRepository, type JobRepository } from "./jobs.ts";
-import { createDurableExecutionLedger, insertEvent, readAttempts } from "./ledger.ts";
+import { createKillSwitchRepository, type KillSwitchRepository } from "./kill-switch.ts";
+import { createDurableExecutionLedger, insertEvent, readAttempts, readAttemptsByAgent } from "./ledger.ts";
+import { createMonitoringCycleRepository, type MonitoringCycleRepository } from "./monitoring-cycles.ts";
 import { createApprovalRepository, type ApprovalRepository } from "./approvals.ts";
 import { createMemoryRepository, type MemoryRepository } from "./memory.ts";
 import { createOccurrenceRepository, type OccurrenceRepository } from "./occurrences.ts";
@@ -28,10 +31,12 @@ import { TRADING_STORE_SCHEMA_SQL } from "./schema.ts";
  * Phase 10.3 step 6 adds occurrence execution and reconciliation labels
  * as version 5. Those labels cite the existing ledger and reconciliation
  * enums. They are not a second state machine.
- * Version 6 adds append-only trading memory and learning revisions. */
-export const TRADING_STORE_SCHEMA_VERSION = 6 as const;
+ * Version 6 adds append-only trading memory and learning revisions.
+ * Version 7 adds the kill switch, sealed decision artifacts, the gate
+ * citation, exit citations, and monitoring cycles. */
+export const TRADING_STORE_SCHEMA_VERSION = 7 as const;
 
-const TRADING_STORE_SCHEMA_VERSIONS = [0, 1, 2, 3, 4, 5, TRADING_STORE_SCHEMA_VERSION] as const;
+const TRADING_STORE_SCHEMA_VERSIONS = [0, 1, 2, 3, 4, 5, 6, TRADING_STORE_SCHEMA_VERSION] as const;
 
 export interface OpenTradingStoreInput {
   readonly path: string;
@@ -44,6 +49,7 @@ export interface TradingStore {
   readonly path: string;
   readonly ledger: ExecutionLedger;
   readAttempts(identity: string): readonly ExecutionAttemptRecord[];
+  readAttemptsByAgent(agentRunId: string): readonly ExecutionAttemptRecord[];
   readRequest(identity: string): PersistedExecutionRequest | null;
   readRequestById(executionRequestId: string): PersistedExecutionRequest | null;
   readEvents(): readonly TradingEvent[];
@@ -60,6 +66,9 @@ export interface TradingStore {
   readonly occurrences: OccurrenceRepository;
   readonly approvals: ApprovalRepository;
   readonly memory: MemoryRepository;
+  readonly killSwitches: KillSwitchRepository;
+  readonly artifacts: ArtifactRepository;
+  readonly monitoringCycles: MonitoringCycleRepository;
   close(): void;
 }
 
@@ -161,6 +170,24 @@ function ensureOccurrenceLifecycleColumns(db: DatabaseSync): void {
       )
     )`);
   }
+  const add = (name: string, ddl: string) => {
+    if (!columns.has(name)) db.exec(`ALTER TABLE trading_occurrences ADD COLUMN ${ddl}`);
+  };
+  add("gate_decision_id", "gate_decision_id TEXT");
+  add("exit_execution_request_id", "exit_execution_request_id TEXT");
+  add("exit_execution_state", `exit_execution_state TEXT CHECK (
+    exit_execution_state IS NULL OR exit_execution_state IN (
+      'NOT_SUBMITTED',
+      'SUBMISSION_REJECTED',
+      'SUBMISSION_ACCEPTED',
+      'SUBMISSION_UNKNOWN',
+      'FILL_REPORTED'
+    )
+  )`);
+  add("exit_broker_called", "exit_broker_called INTEGER");
+  add("exit_close_position_id", "exit_close_position_id TEXT");
+  add("exit_quantity", "exit_quantity TEXT");
+  add("exit_failure_code", "exit_failure_code TEXT");
 }
 
 function migrate(db: DatabaseSync, environment: TradingEnvironment): void {
@@ -232,6 +259,9 @@ function store(db: DatabaseSync, path: string, environment: TradingEnvironment):
   const occurrences = createOccurrenceRepository(db, environment);
   const approvals = createApprovalRepository(db, environment);
   const memory = createMemoryRepository(db, environment);
+  const killSwitches = createKillSwitchRepository(db, environment);
+  const artifacts = createArtifactRepository(db, environment);
+  const monitoringCycles = createMonitoringCycleRepository(db, environment);
   return {
     schemaVersion: TRADING_STORE_SCHEMA_VERSION,
     environment,
@@ -239,6 +269,9 @@ function store(db: DatabaseSync, path: string, environment: TradingEnvironment):
     ledger,
     readAttempts(identity) {
       return readAttempts(db, identity);
+    },
+    readAttemptsByAgent(agentRunId) {
+      return readAttemptsByAgent(db, agentRunId);
     },
     readRequest(identity) {
       const row = db.prepare(
@@ -490,6 +523,9 @@ function store(db: DatabaseSync, path: string, environment: TradingEnvironment):
     occurrences,
     approvals,
     memory,
+    killSwitches,
+    artifacts,
+    monitoringCycles,
     close() {
       db.close();
     },

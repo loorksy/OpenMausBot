@@ -268,10 +268,10 @@ describe("trading occurrence store", () => {
     `);
     db.close();
     const upgraded = openTradingStore({ path, environment: "PAPER" });
-    expect(upgraded.schemaVersion).toBe(6);
+    expect(upgraded.schemaVersion).toBe(7);
     upgraded.close();
     const check = new DatabaseSync(path);
-    expect(check.prepare("SELECT version FROM schema_meta WHERE id = 1").get()).toMatchObject({ version: 6 });
+    expect(check.prepare("SELECT version FROM schema_meta WHERE id = 1").get()).toMatchObject({ version: 7 });
     expect(check.prepare("SELECT job_id, payload_json FROM xauusd_jobs").get()).toMatchObject({
       job_id: "job-1",
       payload_json: '{"keep":true}',
@@ -295,7 +295,7 @@ describe("trading occurrence store", () => {
     `).run()).toThrow();
     check.close();
     const again = openTradingStore({ path, environment: "PAPER" });
-    expect(again.schemaVersion).toBe(6);
+    expect(again.schemaVersion).toBe(7);
     expect(again.occurrences.readByRoutineRun("run-1")).toBeNull();
     again.close();
     const still = new DatabaseSync(path);

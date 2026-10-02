@@ -1,4 +1,5 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -16,6 +17,8 @@ import { evaluateXauUsdProposal, type ProposalInput } from "../proposal/evaluate
 import { createMemoryExecutionLedger } from "./ledger.ts";
 import { createMetaApiExecutionAdapter } from "./metaapi.ts";
 import type { MetaApiTransport, XauUsdExecutionProvider } from "./provider.ts";
+import { killSwitchAuthorityFromValue } from "../persistence/kill-switch.ts";
+import { openTradingStore } from "../persistence/store.ts";
 import { submitAuthorizedExecution, type ExecutionSubmitInput } from "./submit.ts";
 import { translateMetaApiTradeResponse } from "./translate.ts";
 
@@ -262,6 +265,9 @@ function executionInput(
     agentRunId: RUN,
     evaluationRunId: "eval-1",
     ...extra,
+    killSwitchAuthority: (extra.killSwitchAuthority as ExecutionSubmitInput["killSwitchAuthority"]) ?? killSwitchAuthorityFromValue(
+      Object.prototype.hasOwnProperty.call(extra, "killSwitch") ? extra.killSwitch : ready.input.killSwitch,
+    ),
   } as ExecutionSubmitInput;
 }
 
@@ -566,6 +572,50 @@ describe("MetaApi response translation", () => {
     const leaked = await submitAuthorizedExecution({ ...secretInput, token: TOKEN } as ExecutionSubmitInput);
     expect(leaked.reasons).toEqual(["CREDENTIALS_FORBIDDEN"]);
     expect(JSON.stringify(leaked)).not.toContain(TOKEN);
+  });
+});
+
+describe("authoritative kill switch", () => {
+  it("does not let a caller-supplied open switch bypass a stored engaged or missing switch", async () => {
+    const ready = prepared();
+    const dir = mkdtempSync(join(tmpdir(), "xauusd-kill-"));
+    const saved = openTradingStore({ path: join(dir, "trading.db"), environment: "PAPER" });
+    const open = ready.input.killSwitch;
+    const missing = await submitAuthorizedExecution(executionInput(ready, provider(["accepted"]).provider, createMemoryExecutionLedger(), {
+      killSwitch: open,
+      killSwitchAuthority: saved.killSwitches.authority(),
+    }));
+    expect(missing.reasons).toEqual(["KILL_SWITCH_UNKNOWN"]);
+    expect(missing.brokerCalled).toBe(false);
+    saved.killSwitches.write(parseKillSwitchState({
+      schemaVersion: 1,
+      environment: "PAPER",
+      engaged: true,
+      agentRunId: RUN,
+      updatedAt: AT,
+      source: "operator",
+    }));
+    const stopped = await submitAuthorizedExecution(executionInput(ready, provider(["accepted"]).provider, createMemoryExecutionLedger(), {
+      killSwitch: open,
+      killSwitchAuthority: saved.killSwitches.authority(),
+    }));
+    expect(stopped.reasons).toEqual(["KILL_SWITCH_ENGAGED"]);
+    expect(stopped.brokerCalled).toBe(false);
+    saved.killSwitches.write(parseKillSwitchState({
+      schemaVersion: 1,
+      environment: "PAPER",
+      engaged: false,
+      agentRunId: RUN,
+      updatedAt: AT,
+      source: "operator",
+    }));
+    const allowed = await submitAuthorizedExecution(executionInput(ready, provider(["accepted"]).provider, createMemoryExecutionLedger(), {
+      killSwitch: null,
+      killSwitchAuthority: saved.killSwitches.authority(),
+    }));
+    expect(allowed.state).toBe("SUBMISSION_ACCEPTED");
+    expect(allowed.brokerCalled).toBe(true);
+    saved.close();
   });
 });
 

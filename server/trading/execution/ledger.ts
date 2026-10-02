@@ -31,6 +31,7 @@ export interface ExecutionAttemptRecord {
   readonly requestedQuantity: number | null;
   readonly quantity: number;
   readonly clientId: string;
+  readonly closePositionId?: string | null;
   readonly state: ExecutionState;
   readonly brokerRequestId: string | null;
   readonly brokerCode: string | null;

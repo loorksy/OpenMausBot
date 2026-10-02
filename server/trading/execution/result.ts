@@ -75,6 +75,7 @@ export interface ExecutionDecision {
   readonly stop: number | null;
   readonly takeProfit: number | null;
   readonly quantity: number | null;
+  readonly closePositionId: string | null;
   readonly brokerRequestId: string | null;
   readonly brokerCode: string | null;
   readonly fill: ExecutionFill | null;

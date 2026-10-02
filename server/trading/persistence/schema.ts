@@ -183,6 +183,21 @@ CREATE TABLE IF NOT EXISTS trading_occurrences (
     )
   ),
   proposal_binding_hash TEXT,
+  gate_decision_id TEXT,
+  exit_execution_request_id TEXT,
+  exit_execution_state TEXT CHECK (
+    exit_execution_state IS NULL OR exit_execution_state IN (
+      'NOT_SUBMITTED',
+      'SUBMISSION_REJECTED',
+      'SUBMISSION_ACCEPTED',
+      'SUBMISSION_UNKNOWN',
+      'FILL_REPORTED'
+    )
+  ),
+  exit_broker_called INTEGER,
+  exit_close_position_id TEXT,
+  exit_quantity TEXT,
+  exit_failure_code TEXT,
   domain_status TEXT NOT NULL CHECK (domain_status IN (
     'turn_not_started',
     'observing',
@@ -244,4 +259,44 @@ CREATE TABLE IF NOT EXISTS trading_learning (
   recorded_at TEXT NOT NULL,
   payload_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS kill_switch_state (
+  environment TEXT NOT NULL,
+  agent_run_id TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  PRIMARY KEY (environment, agent_run_id)
+);
+CREATE TABLE IF NOT EXISTS trading_decisions (
+  decision_id TEXT PRIMARY KEY,
+  agent_run_id TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS trading_risk_decisions (
+  risk_decision_id TEXT PRIMARY KEY,
+  agent_run_id TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS trading_policy_decisions (
+  policy_decision_id TEXT PRIMARY KEY,
+  agent_run_id TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS trading_gate_decisions (
+  gate_decision_id TEXT PRIMARY KEY,
+  agent_run_id TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS trading_monitoring_cycles (
+  cycle_id TEXT PRIMARY KEY,
+  occurrence_id TEXT NOT NULL,
+  agent_run_id TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  observed_at TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS trading_monitoring_cycles_occurrence
+  ON trading_monitoring_cycles(occurrence_id, observed_at);
 `;

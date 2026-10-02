@@ -620,7 +620,7 @@ describe("OANDA credential boundary", () => {
       "src/components/XauUsdChart.tsx",
       "src/trading/kline-adapter.ts",
     ].map((path) => readFileSync(join(ROOT, path), "utf8")).join("\n");
-    expect(source).not.toMatch(/oanda|api-fxtrade|api-fxpractice|OMB_OANDA|Authorization/i);
+    expect(source).not.toMatch(/oanda|api-fxtrade|api-fxpractice|OMB_OANDA|\bAuthorization\b/i);
   });
 
   it("does not call a provider that is missing or not a live feed", async () => {

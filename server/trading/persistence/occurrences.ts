@@ -1,11 +1,17 @@
 import type { DatabaseSync } from "node:sqlite";
 
+import type { Decision } from "../../../shared/trading/decision.ts";
+import { parseDecision } from "../../../shared/trading/decision.ts";
 import { tradingEnvironmentSchema, type ProvenanceStatus, type TradingEnvironment } from "../../../shared/trading/environment.ts";
 import { TradingDomainError } from "../../../shared/trading/errors.ts";
 import { assertNoSecretFields, recordIdSchema, seal, utcTimestampSchema } from "../../../shared/trading/ids.ts";
 import { XAUUSD_INSTRUMENT } from "../../../shared/trading/instrument.ts";
 import { parseReconciliationState, type ReconciliationState } from "../../../shared/trading/reconciliation.ts";
 import { EXECUTION_STATES, type ExecutionState } from "../execution/result.ts";
+import type { GateDecision } from "../gate/result.ts";
+import type { PolicyDecision } from "../policy/result.ts";
+import type { RiskDecision } from "../risk/result.ts";
+import { writeSealedRow } from "./artifacts.ts";
 import {
   parseOccurrenceDomainStatus,
   routineAgentRunId,
@@ -32,11 +38,18 @@ export interface TradingOccurrence {
   readonly orderIntentId: string | null;
   readonly riskDecisionId: string | null;
   readonly policyDecisionId: string | null;
+  readonly gateDecisionId: string | null;
   readonly approvalId: string | null;
   readonly executionRequestId: string | null;
   readonly reconciliationRunId: string | null;
   /** Citation of `execution_attempts.state`. It is not a second execution machine. */
   readonly executionState: ExecutionState | null;
+  readonly exitExecutionRequestId: string | null;
+  readonly exitExecutionState: ExecutionState | null;
+  readonly exitBrokerCalled: boolean | null;
+  readonly exitClosePositionId: string | null;
+  readonly exitQuantity: number | null;
+  readonly exitFailureCode: string | null;
   /** Citation of `reconciliation_runs.state`. It is not a second reconciliation machine. */
   readonly reconciliationState: ReconciliationState | null;
   readonly proposalBindingHash: string | null;
@@ -76,6 +89,30 @@ export interface EligibilityReferenceWrite {
   readonly failureCode: string | null;
 }
 
+/** Decision, risk, policy, and gate bodies written in the same transaction
+ * as the occurrence citation. */
+export interface AuthoritativeReferenceWrite extends EligibilityReferenceWrite {
+  readonly gateDecisionId: string | null;
+  readonly decision: Decision | null;
+  readonly risk: RiskDecision | null;
+  readonly policy: PolicyDecision | null;
+  readonly gate: GateDecision | null;
+}
+
+/** Close citation. It points at the existing exit attempt. It is not a
+ * second close command. */
+export interface ExitExecutionWrite {
+  readonly occurrenceId: string;
+  readonly agentRunId: string;
+  readonly environment: TradingEnvironment;
+  readonly executionRequestId: string;
+  readonly executionState: ExecutionState;
+  readonly brokerCalled: boolean;
+  readonly closePositionId: string | null;
+  readonly quantity: number | null;
+  readonly failureCode: string | null;
+}
+
 /** Correlation for one authorized execution request. It does not store the
  * broker payload or a second copy of the execution attempt. */
 export interface ExecutionReceiptWrite {
@@ -97,6 +134,8 @@ export interface ReconciliationReceiptWrite {
   readonly reconciliationRunId: string;
   readonly reconciliationState: ReconciliationState;
   readonly reconciledAt: string;
+  /** Broker book that governed this reconciliation. Omitted leaves the stored citation. */
+  readonly snapshotId?: string | null;
 }
 
 export interface OccurrenceRepository {
@@ -105,7 +144,9 @@ export interface OccurrenceRepository {
   readByOccurrenceId(occurrenceId: string): TradingOccurrence | null;
   attachProviderTurn(input: ProviderTurnAttach): TradingOccurrence;
   attachEligibilityReferences(input: EligibilityReferenceWrite): TradingOccurrence;
+  attachAuthoritativeRecords(input: AuthoritativeReferenceWrite): TradingOccurrence;
   attachExecutionReceipt(input: ExecutionReceiptWrite): TradingOccurrence;
+  attachExitExecution(input: ExitExecutionWrite): TradingOccurrence;
   attachReconciliationReceipt(input: ReconciliationReceiptWrite): TradingOccurrence;
 }
 
@@ -139,6 +180,7 @@ const RECONCILIATION_KEYS = new Set([
   "reconciliationRunId",
   "reconciliationState",
   "reconciledAt",
+  "snapshotId",
 ]);
 
 /** Zero matches and more than one match both fail closed. */
@@ -167,10 +209,17 @@ interface OccurrenceRow {
   order_intent_id: string | null;
   risk_decision_id: string | null;
   policy_decision_id: string | null;
+  gate_decision_id: string | null;
   approval_id: string | null;
   execution_request_id: string | null;
   reconciliation_run_id: string | null;
   execution_state: string | null;
+  exit_execution_request_id: string | null;
+  exit_execution_state: string | null;
+  exit_broker_called: number | null;
+  exit_close_position_id: string | null;
+  exit_quantity: string | null;
+  exit_failure_code: string | null;
   reconciliation_state: string | null;
   proposal_binding_hash: string | null;
   domain_status: string;
@@ -227,6 +276,8 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
           risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
           execution_state, reconciliation_state,
+          gate_decision_id, exit_execution_request_id, exit_execution_state, exit_broker_called,
+          exit_close_position_id, exit_quantity, exit_failure_code,
           proposal_binding_hash, domain_status, failure_code, started_at, completed_at
         FROM trading_occurrences
         WHERE routine_run_id = ?
@@ -241,6 +292,8 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
           risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
           execution_state, reconciliation_state,
+          gate_decision_id, exit_execution_request_id, exit_execution_state, exit_broker_called,
+          exit_close_position_id, exit_quantity, exit_failure_code,
           proposal_binding_hash, domain_status, failure_code, started_at, completed_at
         FROM trading_occurrences
         WHERE occurrence_id = ?
@@ -266,6 +319,8 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
           risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
           execution_state, reconciliation_state,
+          gate_decision_id, exit_execution_request_id, exit_execution_state, exit_broker_called,
+          exit_close_position_id, exit_quantity, exit_failure_code,
           proposal_binding_hash, domain_status, failure_code, started_at, completed_at
         FROM trading_occurrences
         WHERE routine_id = ? AND routine_run_id = ? AND thread_id = ?
@@ -310,6 +365,8 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
           risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
           execution_state, reconciliation_state,
+          gate_decision_id, exit_execution_request_id, exit_execution_state, exit_broker_called,
+          exit_close_position_id, exit_quantity, exit_failure_code,
           proposal_binding_hash, domain_status, failure_code, started_at, completed_at
         FROM trading_occurrences
         WHERE occurrence_id = ?
@@ -352,6 +409,8 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
           risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
           execution_state, reconciliation_state,
+          gate_decision_id, exit_execution_request_id, exit_execution_state, exit_broker_called,
+          exit_close_position_id, exit_quantity, exit_failure_code,
           proposal_binding_hash, domain_status, failure_code, started_at, completed_at
         FROM trading_occurrences
         WHERE occurrence_id = ?
@@ -437,6 +496,8 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
           risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
           execution_state, reconciliation_state,
+          gate_decision_id, exit_execution_request_id, exit_execution_state, exit_broker_called,
+          exit_close_position_id, exit_quantity, exit_failure_code,
           proposal_binding_hash, domain_status, failure_code, started_at, completed_at
         FROM trading_occurrences
         WHERE occurrence_id = ?
@@ -459,6 +520,142 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
         || stored.completed_at !== preserved.completedAt
       ) {
         throw new TradingDomainError("immutable_revision", "Eligibility correlation already differs. Failing closed.");
+      }
+      return seal(fromRow(stored));
+    },
+    attachAuthoritativeRecords(input) {
+      const decisionId = nullableReference(input.decisionId, "Decision id");
+      const orderIntentId = nullableReference(input.orderIntentId, "Order intent id");
+      const riskDecisionId = nullableReference(input.riskDecisionId, "Risk decision id");
+      const policyDecisionId = nullableReference(input.policyDecisionId, "Policy decision id");
+      const gateDecisionId = nullableReference(input.gateDecisionId, "Gate decision id");
+      const approvalId = nullableReference(input.approvalId, "Approval id");
+      const proposalBindingHash = nullableReference(input.proposalBindingHash, "Proposal binding");
+      const failureCode = nullableFailure(input.failureCode);
+      requireArtifact(decisionId, input.decision, input.decision?.id ?? null, "Decision");
+      requireArtifact(riskDecisionId, input.risk, input.risk?.id ?? null, "Risk decision");
+      requireArtifact(policyDecisionId, input.policy, input.policy?.id ?? null, "Policy decision");
+      requireArtifact(gateDecisionId, input.gate, input.gate?.id ?? null, "Gate decision");
+      const decision = decisionId === null ? null : parseDecision(input.decision);
+      if (decision !== null && decision.environment !== environment) {
+        throw new TradingDomainError("trading_store_rejected", "Decision environment was rejected. Failing closed.");
+      }
+      if (!recordIdSchema.safeParse(input.occurrenceId).success || !recordIdSchema.safeParse(input.agentRunId).success) {
+        throw new TradingDomainError("trading_store_rejected", "Eligibility correlation identity was rejected. Failing closed.");
+      }
+      const parsedEnvironment = tradingEnvironmentSchema.safeParse(input.environment);
+      if (!parsedEnvironment.success || parsedEnvironment.data !== environment) {
+        throw new TradingDomainError("trading_store_rejected", "Eligibility correlation environment was rejected. Failing closed.");
+      }
+      const current = readOccurrenceRow(db, input.occurrenceId);
+      if (current === undefined || current.agent_run_id !== input.agentRunId || current.environment !== environment) {
+        throw new TradingDomainError("trading_store_rejected", "Eligibility correlation matched no occurrence. Failing closed.");
+      }
+      agree(current.decision_id, decisionId);
+      agree(current.order_intent_id, orderIntentId);
+      agree(current.risk_decision_id, riskDecisionId);
+      agree(current.policy_decision_id, policyDecisionId);
+      agree(current.gate_decision_id, gateDecisionId);
+      agree(current.approval_id, approvalId);
+      agree(current.proposal_binding_hash, proposalBindingHash);
+      agree(current.failure_code, failureCode);
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        if (decision !== null) writeSealedRow(db, "trading_decisions", "decision_id", decision.id, decision.agentRunId, environment, decision);
+        if (input.risk !== null && riskDecisionId !== null) writeSealedRow(db, "trading_risk_decisions", "risk_decision_id", input.risk.id, input.risk.agentRunId, environment, input.risk);
+        if (input.policy !== null && policyDecisionId !== null) writeSealedRow(db, "trading_policy_decisions", "policy_decision_id", input.policy.id, input.policy.agentRunId, environment, input.policy);
+        if (input.gate !== null && gateDecisionId !== null) writeSealedRow(db, "trading_gate_decisions", "gate_decision_id", input.gate.id, input.gate.agentRunId, environment, input.gate);
+        db.prepare(`
+          UPDATE trading_occurrences
+          SET decision_id = COALESCE(decision_id, ?),
+              order_intent_id = COALESCE(order_intent_id, ?),
+              risk_decision_id = COALESCE(risk_decision_id, ?),
+              policy_decision_id = COALESCE(policy_decision_id, ?),
+              gate_decision_id = COALESCE(gate_decision_id, ?),
+              approval_id = COALESCE(approval_id, ?),
+              proposal_binding_hash = COALESCE(proposal_binding_hash, ?),
+              failure_code = COALESCE(failure_code, ?)
+          WHERE occurrence_id = ?
+            AND agent_run_id = ?
+            AND environment = ?
+        `).run(
+          decisionId,
+          orderIntentId,
+          riskDecisionId,
+          policyDecisionId,
+          gateDecisionId,
+          approvalId,
+          proposalBindingHash,
+          failureCode,
+          input.occurrenceId,
+          input.agentRunId,
+          environment,
+        );
+        db.exec("COMMIT");
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          // The artifact transaction is already closed.
+        }
+        if (error instanceof TradingDomainError) throw error;
+        throw new TradingDomainError("trading_store_rejected", "Authoritative trading records were rejected. Failing closed.");
+      }
+      const stored = readOccurrenceRow(db, input.occurrenceId);
+      if (
+        stored === undefined
+        || stored.decision_id !== (current.decision_id ?? decisionId)
+        || stored.risk_decision_id !== (current.risk_decision_id ?? riskDecisionId)
+        || stored.policy_decision_id !== (current.policy_decision_id ?? policyDecisionId)
+        || stored.gate_decision_id !== (current.gate_decision_id ?? gateDecisionId)
+      ) {
+        throw new TradingDomainError("immutable_revision", "Authoritative trading records already differ. Failing closed.");
+      }
+      return seal(fromRow(stored));
+    },
+    attachExitExecution(input) {
+      assertNoSecretFields(input, "exit execution");
+      if (!recordIdSchema.safeParse(input.occurrenceId).success || !recordIdSchema.safeParse(input.agentRunId).success) {
+        throw new TradingDomainError("trading_store_rejected", "Exit execution identity was rejected. Failing closed.");
+      }
+      if (input.environment !== environment) {
+        throw new TradingDomainError("trading_store_rejected", "Exit execution environment was rejected. Failing closed.");
+      }
+      const executionState = parseStoredExecutionState(input.executionState);
+      const executionRequestId = nullableReference(input.executionRequestId, "Exit execution id");
+      if (executionState === null || executionRequestId === null) {
+        throw new TradingDomainError("trading_store_rejected", "Exit execution identity was rejected. Failing closed.");
+      }
+      const current = readOccurrenceRow(db, input.occurrenceId);
+      if (current === undefined || current.agent_run_id !== input.agentRunId) {
+        throw new TradingDomainError("trading_store_rejected", "Exit execution matched no occurrence. Failing closed.");
+      }
+      agree(current.exit_execution_request_id, executionRequestId);
+      const written = db.prepare(`
+        UPDATE trading_occurrences
+        SET exit_execution_request_id = COALESCE(exit_execution_request_id, ?),
+            exit_execution_state = ?,
+            exit_broker_called = ?,
+            exit_close_position_id = COALESCE(exit_close_position_id, ?),
+            exit_quantity = COALESCE(exit_quantity, ?),
+            exit_failure_code = ?
+        WHERE occurrence_id = ? AND agent_run_id = ? AND environment = ?
+          AND (exit_execution_request_id IS NULL OR exit_execution_request_id = ?)
+      `).run(
+        executionRequestId,
+        executionState,
+        input.brokerCalled ? 1 : 0,
+        input.closePositionId,
+        input.quantity === null ? null : String(input.quantity),
+        input.failureCode,
+        input.occurrenceId,
+        input.agentRunId,
+        environment,
+        executionRequestId,
+      );
+      const stored = readOccurrenceRow(db, input.occurrenceId);
+      if (written.changes !== 1 || stored === undefined || stored.exit_execution_request_id !== executionRequestId || stored.exit_execution_state !== executionState) {
+        throw new TradingDomainError("immutable_revision", "Exit execution already differs. Failing closed.");
       }
       return seal(fromRow(stored));
     },
@@ -503,6 +700,8 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
           risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
           execution_state, reconciliation_state,
+          gate_decision_id, exit_execution_request_id, exit_execution_state, exit_broker_called,
+          exit_close_position_id, exit_quantity, exit_failure_code,
           proposal_binding_hash, domain_status, failure_code, started_at, completed_at
         FROM trading_occurrences
         WHERE occurrence_id = ?
@@ -573,6 +772,8 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
           risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
           execution_state, reconciliation_state,
+          gate_decision_id, exit_execution_request_id, exit_execution_state, exit_broker_called,
+          exit_close_position_id, exit_quantity, exit_failure_code,
           proposal_binding_hash, domain_status, failure_code, started_at, completed_at
         FROM trading_occurrences
         WHERE occurrence_id = ?
@@ -631,6 +832,8 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
           risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
           execution_state, reconciliation_state,
+          gate_decision_id, exit_execution_request_id, exit_execution_state, exit_broker_called,
+          exit_close_position_id, exit_quantity, exit_failure_code,
           proposal_binding_hash, domain_status, failure_code, started_at, completed_at
         FROM trading_occurrences
         WHERE occurrence_id = ?
@@ -648,6 +851,11 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
         throw new TradingDomainError("trading_store_rejected", "Reconciliation receipt environment does not match. Failing closed.");
       }
       agreeReconciliation(current.reconciliation_run_id, current.reconciliation_state, reconciliationRunId, reconciliationState);
+      const snapshotId = input.snapshotId == null ? null : nullableReference(input.snapshotId, "Snapshot id");
+      const snapshotAdvances = current.reconciliation_state === "UNKNOWN"
+        && current.reconciliation_run_id !== null
+        && current.reconciliation_run_id !== reconciliationRunId;
+      if (!snapshotAdvances) agree(current.snapshot_id, snapshotId);
       const nextStatus = reconciliationDisplay(current.domain_status, reconciliationState);
       const nextCompleted = reconciliationState === "UNKNOWN"
         ? current.completed_at
@@ -656,7 +864,11 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
       try {
         const result = db.prepare(`
           UPDATE trading_occurrences
-          SET reconciliation_run_id = ?,
+          SET snapshot_id = CASE
+                WHEN ? = 1 THEN COALESCE(?, snapshot_id)
+                ELSE COALESCE(snapshot_id, ?)
+              END,
+              reconciliation_run_id = ?,
               reconciliation_state = ?,
               domain_status = CASE
                 WHEN ? = 'UNKNOWN' THEN domain_status
@@ -682,6 +894,9 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
               OR reconciliation_state = 'UNKNOWN'
             )
         `).run(
+          snapshotAdvances ? 1 : 0,
+          snapshotId,
+          snapshotId,
           reconciliationRunId,
           reconciliationState,
           reconciliationState,
@@ -717,12 +932,16 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
           risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
           execution_state, reconciliation_state,
+          gate_decision_id, exit_execution_request_id, exit_execution_state, exit_broker_called,
+          exit_close_position_id, exit_quantity, exit_failure_code,
           proposal_binding_hash, domain_status, failure_code, started_at, completed_at
         FROM trading_occurrences
         WHERE occurrence_id = ?
       `).get(input.occurrenceId) as OccurrenceRow | undefined;
+      const expectedSnapshot = snapshotAdvances && snapshotId !== null ? snapshotId : current.snapshot_id ?? snapshotId;
       if (
         stored === undefined
+        || stored.snapshot_id !== expectedSnapshot
         || stored.reconciliation_run_id !== reconciliationRunId
         || stored.reconciliation_state !== reconciliationState
         || stored.domain_status !== nextStatus
@@ -798,6 +1017,28 @@ function parseStoredExecutionState(value: string | null): ExecutionState | null 
 
 /** A null column may be filled once. A later null leaves the stored value.
  * Two different non-null values are an immutable revision. */
+function readOccurrenceRow(db: DatabaseSync, occurrenceId: string): OccurrenceRow | undefined {
+  return db.prepare(`
+    SELECT
+      occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
+      instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
+      risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+      execution_state, reconciliation_state,
+      gate_decision_id, exit_execution_request_id, exit_execution_state, exit_broker_called,
+      exit_close_position_id, exit_quantity, exit_failure_code,
+      proposal_binding_hash, domain_status, failure_code, started_at, completed_at
+    FROM trading_occurrences
+    WHERE occurrence_id = ?
+  `).get(occurrenceId) as OccurrenceRow | undefined;
+}
+
+function requireArtifact(id: string | null, body: unknown, bodyId: string | null, label: string): void {
+  if (id === null && body == null) return;
+  if (id === null || body == null || bodyId !== id) {
+    throw new TradingDomainError("trading_store_rejected", `${label} citation was rejected. Failing closed.`);
+  }
+}
+
 function agree(current: string | null, next: string | null): void {
   if (next === null || current === null || current === next) return;
   throw new TradingDomainError("immutable_revision", "Eligibility correlation already differs. Failing closed.");
@@ -841,10 +1082,17 @@ function occurrenceFromInsert(input: RoutineOccurrenceInsert, storeEnvironment: 
     orderIntentId: null,
     riskDecisionId: null,
     policyDecisionId: null,
+    gateDecisionId: null,
     approvalId: null,
     executionRequestId: null,
     reconciliationRunId: null,
     executionState: null,
+    exitExecutionRequestId: null,
+    exitExecutionState: null,
+    exitBrokerCalled: null,
+    exitClosePositionId: null,
+    exitQuantity: null,
+    exitFailureCode: null,
     reconciliationState: null,
     proposalBindingHash: null,
     domainStatus,
@@ -873,10 +1121,17 @@ function fromRow(row: OccurrenceRow): TradingOccurrence {
     orderIntentId: row.order_intent_id,
     riskDecisionId: row.risk_decision_id,
     policyDecisionId: row.policy_decision_id,
+    gateDecisionId: row.gate_decision_id,
     approvalId: row.approval_id,
     executionRequestId: row.execution_request_id,
     reconciliationRunId: row.reconciliation_run_id,
     executionState: parseStoredExecutionState(row.execution_state),
+    exitExecutionRequestId: row.exit_execution_request_id,
+    exitExecutionState: parseStoredExecutionState(row.exit_execution_state),
+    exitBrokerCalled: row.exit_broker_called === null ? null : row.exit_broker_called === 1,
+    exitClosePositionId: row.exit_close_position_id,
+    exitQuantity: row.exit_quantity === null ? null : Number(row.exit_quantity),
+    exitFailureCode: row.exit_failure_code,
     reconciliationState: row.reconciliation_state === null ? null : parseReconciliationState(row.reconciliation_state),
     proposalBindingHash: row.proposal_binding_hash,
     domainStatus: parseOccurrenceDomainStatus(row.domain_status),

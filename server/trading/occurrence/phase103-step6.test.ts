@@ -146,6 +146,7 @@ function adapter(transport: MetaApiTransport) {
 
 function request(saved: TradingStore, transport: MetaApiTransport): EligibleExecutionInput {
   const occurrenceId = bind(saved);
+  saved.killSwitches.write(kill(false));
   return {
     instrument: "XAUUSD",
     decision: decision("LONG", 4624.5),
@@ -190,6 +191,7 @@ function request(saved: TradingStore, transport: MetaApiTransport): EligibleExec
     approvalRequestId: "req-1",
     reconciliation: "RECONCILED",
     killSwitch: kill(false),
+    killSwitchAuthority: saved.killSwitches.authority(),
     provider: adapter(transport),
     ledger: saved.ledger,
     accountBinding: binding(),
@@ -655,7 +657,7 @@ describe("phase 10.3 step 6 occurrence lifecycle", () => {
     `);
     db.close();
     const upgraded = openTradingStore({ path, environment: "PAPER" });
-    expect(upgraded.schemaVersion).toBe(6);
+    expect(upgraded.schemaVersion).toBe(7);
     const row = upgraded.occurrences.readByOccurrenceId("occ.keep");
     expect(row?.routineRunId).toBe(ROUTINE_RUN);
     expect(row?.executionState).toBeNull();

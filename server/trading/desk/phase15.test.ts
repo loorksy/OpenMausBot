@@ -31,29 +31,17 @@ function event(type: "monitoring.started" | "decision.created" | "emergency.stop
 }
 
 describe("phase 15 desk, health, and chart", () => {
-  it("projects presence from real events and keeps correlation ids", () => {
-    const idle = projectDesk({ events: [] });
-    expect(idle.presence).toBe("IDLE");
-    expect(idle.at).toBeNull();
+  it("does not derive room presence, position, or the kill switch from events", () => {
     const desk = projectDesk({
       events: [event("monitoring.started"), event("decision.created", "2026-08-15T14:31:00.000Z"), event("emergency.stop", "2026-08-15T14:32:00.000Z")],
       positionState: "POSITION_OPEN",
     });
-    expect(desk.presence).toBe("BLOCKED");
-    expect(desk.at).toBe("2026-08-15T14:32:00.000Z");
-    expect(desk.killSwitchEngaged).toBe(true);
-    expect(desk.positionState).toBe("POSITION_OPEN");
-    expect(desk.correlation).toMatchObject({
-      agentRunId: "run-1",
-      occurrenceId: "occ-1",
-      routineId: "routine-1",
-      threadId: "thread-1",
-      providerTurnId: "turn-1",
-      executionRequestId: "exr-1",
-      positionId: "pos-9",
-    });
-    const review = projectDesk({ events: [event("review.created")] });
-    expect(review.presence).toBe("REVIEWING");
+    expect(desk.authoritative).toBe(false);
+    expect(desk.presence).toBeNull();
+    expect(desk.killSwitchEngaged).toBeNull();
+    expect(desk.positionState).toBeNull();
+    expect(desk.at).toBeNull();
+    expect(desk.eventType).toBeNull();
   });
 
   it("reports unhealthy trading dependencies and rejects a query token", () => {
@@ -64,8 +52,9 @@ describe("phase 15 desk, health, and chart", () => {
     expect(health.broker).toBe("UNKNOWN");
     expect(health.healthy).toBe(false);
     expect(health.queryTokenAccepted).toBe(false);
-    expect(tradingDeskReport({}).source).toBe("unconfigured");
-    expect(tradingDeskReport({}).presence).toBe("IDLE");
+    expect(tradingDeskReport({}).source).toBe("not-authoritative");
+    expect(tradingDeskReport({}).authoritative).toBe(false);
+    expect(tradingDeskReport({}).presence).toBeNull();
     expect(queryTokenRejected("?token=secret")).toBe(true);
     expect(queryTokenRejected("")).toBe(false);
     expect(JSON.stringify(health)).not.toContain("token");

@@ -179,7 +179,7 @@ describe("trading room projection", () => {
         reconciliationState: "RECONCILED",
       },
       brokerView: { positionId: "pos-9", direction: "LONG", quantity: 0.12 },
-      exitExecution: { id: "exr-exit", state: "SUBMISSION_ACCEPTED", brokerCalled: true },
+      exitExecution: { id: "exr-exit", state: "SUBMISSION_ACCEPTED", brokerCalled: true, closePositionId: "pos-9", quantity: 0.12, reason: null },
     }).position.state).toBe("POSITION_CLOSING");
     expect(room({
       positionInputs: {
@@ -228,7 +228,7 @@ describe("trading room projection", () => {
         exitState: "SUBMISSION_ACCEPTED",
       },
       brokerView: { positionId: "pos-9", direction: "LONG", quantity: 0.12 },
-      exitExecution: { id: "exr-exit", state: "SUBMISSION_ACCEPTED", brokerCalled: true },
+      exitExecution: { id: "exr-exit", state: "SUBMISSION_ACCEPTED", brokerCalled: true, closePositionId: "pos-9", quantity: 0.12, reason: null },
     }).agentPresence).toBe("EXIT_WORKING");
     expect(room({ reconciliation: { id: "rec-1", state: "DEGRADED" }, positionInputs: { ...flat(), reconciliationState: "DEGRADED", brokerPositionId: "pos-9", brokerQuantity: 0.12 } }).agentPresence).toBe("DEGRADED");
     expect(room({

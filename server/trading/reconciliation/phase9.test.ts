@@ -13,6 +13,7 @@ import { foundationControl } from "../control/boundaries.ts";
 import { executionAttemptKey } from "../execution/identity.ts";
 import type { ExecutionAttemptRecord } from "../execution/ledger.ts";
 import type { XauUsdExecutionProvider } from "../execution/provider.ts";
+import { killSwitchAuthorityFromValue } from "../persistence/kill-switch.ts";
 import { submitAuthorizedExecution, type ExecutionSubmitInput } from "../execution/submit.ts";
 import { evaluateFireTimeGate, type FireTimeGateInput } from "../gate/evaluate.ts";
 import type { PersistedExecutionRequest } from "../persistence/record.ts";
@@ -262,6 +263,7 @@ function executionInput(ready: ReturnType<typeof prepared>, broker: XauUsdExecut
     submittedAt: AT,
     agentRunId: RUN,
     evaluationRunId: "eval-1",
+    killSwitchAuthority: killSwitchAuthorityFromValue(ready.input.killSwitch),
   };
 }
 
@@ -540,13 +542,13 @@ describe("persistent trading ledger", () => {
     `).run(CLIENT, AT, payload);
     db.close();
     const upgraded = applyTradingMigrations({ path, environment: "PAPER" });
-    expect(upgraded.schemaVersion).toBe(6);
+    expect(upgraded.schemaVersion).toBe(7);
     expect(upgraded.readRequest("exn.keep")?.executionRequestId).toBe("exr.keep");
     upgraded.close();
     const check = new DatabaseSync(path);
     expect((check.prepare("SELECT id FROM legacy_marker").get() as { id: string }).id).toBe("keep-me");
     expect(check.prepare("SELECT version, environment FROM schema_meta WHERE id = 1").get()).toMatchObject({
-      version: 6,
+      version: 7,
       environment: "PAPER",
     });
     check.exec("UPDATE schema_meta SET version = 0 WHERE id = 1");

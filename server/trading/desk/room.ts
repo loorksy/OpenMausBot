@@ -131,6 +131,7 @@ export interface TradingRoomState {
   readonly approval: {
     readonly open: { readonly requestId: string; readonly expiresAt: string; readonly decisionId: string } | null;
     readonly decision: { readonly id: string; readonly state: string; readonly reasons: readonly string[] } | null;
+    readonly fact: { readonly approvalId: string; readonly approved: boolean; readonly approvedAt: string } | null;
   };
   readonly gate: { readonly id: string; readonly state: string; readonly reasons: readonly string[] } | null;
   readonly execution: {
@@ -153,12 +154,27 @@ export interface TradingRoomState {
     readonly decision: MonitoringDecisionName | string | null;
     readonly failureCodes: readonly string[];
     readonly brokerHealth: "HEALTHY" | "DEGRADED" | "UNAVAILABLE" | "UNKNOWN" | null;
+    readonly reconciliationState: ReconciliationState | null;
   };
   readonly exit: {
     readonly proposal: "NOT_AVAILABLE" | "RECORDED";
     readonly authorizationRequired: boolean;
     readonly closeNotRepresentable: boolean;
-    readonly execution: { readonly id: string; readonly state: ExecutionState; readonly brokerCalled: boolean } | null;
+    readonly proposalBody: {
+      readonly positionId: string | null;
+      readonly direction: "LONG" | "SHORT" | null;
+      readonly positionQuantity: number | null;
+      readonly proposedExitQuantity: number | null;
+      readonly reason: string;
+    } | null;
+    readonly execution: {
+      readonly id: string;
+      readonly state: ExecutionState;
+      readonly brokerCalled: boolean;
+      readonly closePositionId: string | null;
+      readonly quantity: number | null;
+      readonly reason: string | null;
+    } | null;
   };
   readonly killSwitch: { readonly state: "open" | "engaged" | "unknown"; readonly updatedAt: string | null };
   readonly pause: { readonly paused: boolean; readonly jobId: string | null };
@@ -207,6 +223,9 @@ export interface TradingRoomInput {
   readonly gate: TradingRoomState["gate"];
   readonly approvalOpen: TradingRoomState["approval"]["open"];
   readonly approvalDecision: TradingRoomState["approval"]["decision"];
+  readonly approvalFact?: TradingRoomState["approval"]["fact"];
+  readonly unresolvedCitation?: boolean;
+  readonly monitoringMalformed?: boolean;
   readonly execution: TradingRoomState["execution"];
   readonly exitExecution: TradingRoomState["exit"]["execution"];
   readonly reconciliation: TradingRoomState["reconciliation"];
@@ -217,6 +236,8 @@ export interface TradingRoomInput {
     readonly failureCodes: readonly string[];
     readonly brokerHealth: "HEALTHY" | "DEGRADED" | "UNAVAILABLE" | "UNKNOWN";
     readonly exitProposalRecorded: boolean;
+    readonly reconciliationState?: ReconciliationState | null;
+    readonly exitProposal?: TradingRoomState["exit"]["proposalBody"];
   } | null;
   readonly memory: TradingRoomState["memory"];
   readonly learning: TradingRoomState["learning"];
@@ -264,7 +285,7 @@ export function projectTradingRoom(input: TradingRoomInput): TradingRoomState {
     decisionAvailability: input.decision === null ? "NOT_AVAILABLE" : "RECORD",
     risk: input.risk,
     policy: input.policy,
-    approval: { open: input.approvalOpen, decision: input.approvalDecision },
+    approval: { open: input.approvalOpen, decision: input.approvalDecision, fact: input.approvalFact ?? null },
     gate: input.gate,
     execution: input.execution,
     reconciliation: input.reconciliation,
@@ -274,6 +295,7 @@ export function projectTradingRoom(input: TradingRoomInput): TradingRoomState {
       proposal: exitFlags.proposal,
       authorizationRequired: exitFlags.authorizationRequired,
       closeNotRepresentable: exitFlags.closeNotRepresentable,
+      proposalBody: input.monitoring?.availability === "RECORD" ? input.monitoring.exitProposal ?? null : null,
       execution: input.exitExecution,
     },
     killSwitch,
@@ -328,6 +350,9 @@ function projectKillSwitch(value: TradingRoomInput["killSwitch"]): TradingRoomSt
 }
 
 function projectMonitoring(input: TradingRoomInput, timeline: readonly RoomTimelineEntry[]): TradingRoomState["monitoring"] {
+  if (input.monitoringMalformed === true) {
+    return { availability: "NOT_AVAILABLE", observedAt: null, decision: null, failureCodes: [], brokerHealth: null, reconciliationState: null };
+  }
   if (input.monitoring !== null) {
     return {
       availability: "RECORD",
@@ -335,11 +360,12 @@ function projectMonitoring(input: TradingRoomInput, timeline: readonly RoomTimel
       decision: input.monitoring.decision,
       failureCodes: input.monitoring.failureCodes,
       brokerHealth: input.monitoring.brokerHealth,
+      reconciliationState: input.monitoring.reconciliationState ?? null,
     };
   }
   const evidence = [...timeline].reverse().find((entry) => entry.type === "monitoring.completed" || entry.type === "monitoring.blocked");
   if (evidence === undefined) {
-    return { availability: "NOT_AVAILABLE", observedAt: null, decision: null, failureCodes: [], brokerHealth: null };
+    return { availability: "NOT_AVAILABLE", observedAt: null, decision: null, failureCodes: [], brokerHealth: null, reconciliationState: null };
   }
   return {
     availability: "EVENT_ONLY",
@@ -347,6 +373,7 @@ function projectMonitoring(input: TradingRoomInput, timeline: readonly RoomTimel
     decision: evidence.monitoringDecision,
     failureCodes: evidence.failureCodes,
     brokerHealth: null,
+    reconciliationState: null,
   };
 }
 
@@ -381,8 +408,11 @@ function projectPresence(
     || input.execution?.state === "SUBMISSION_UNKNOWN"
     || input.exitExecution?.state === "SUBMISSION_UNKNOWN"
   ) return "CONFIRMING";
-  // POSITION_CLOSING caused by an accepted exit is EXIT_WORKING. Any other
-  // closing book stays CONFIRMING. Unknown still outranks this branch.
+  // Frozen rule 3 names every POSITION_CLOSING as CONFIRMING, which would make
+  // rule 4 EXIT_WORKING unreachable. The smallest correction that keeps both
+  // meanings: an accepted exit whose broker position is still present is
+  // EXIT_WORKING, and every other CLOSING stays CONFIRMING. Unknown still
+  // outranks both. This is not latest-event presence.
   if (input.exitExecution?.state === "SUBMISSION_ACCEPTED" && (position.state === "POSITION_CLOSING" || (position.brokerQuantity !== null && position.brokerQuantity > 0))) {
     return "EXIT_WORKING";
   }
@@ -463,6 +493,9 @@ function projectNextAction(
   }
   if (safety.killSwitch === "engaged") {
     return base("BLOCKED_KILL_SWITCH", { blockingCondition: "KILL_SWITCH_ENGAGED" });
+  }
+  if (input.unresolvedCitation === true) {
+    return base("WAITING_FOR_RECONCILIATION", { blockingCondition: "RECONCILIATION_UNKNOWN", reason: "CITED_RECORD_MISSING" });
   }
   if (position.state === "POSITION_DESYNCED" || input.reconciliation?.state === "DESYNCED") {
     return base("BLOCKED_DESYNCED", {

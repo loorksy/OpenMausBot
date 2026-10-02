@@ -152,6 +152,7 @@ export function reconcileOccurrenceLifecycle(input: OccurrenceReconciliationInpu
     reconciliationRunId: reconciliation.reconciliationRunId,
     reconciliationState: reconciliation.state,
     reconciledAt: reconciliation.reconciledAt,
+    snapshotId: input.snapshot.snapshotId,
   });
   return seal({
     schemaVersion: OCCURRENCE_LIFECYCLE_VERSION,

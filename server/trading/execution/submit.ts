@@ -9,7 +9,7 @@ import { TradingDomainError } from "../../../shared/trading/errors.ts";
 import type { TradingEvent, TradingEventType } from "../../../shared/trading/events.ts";
 import { assertNoSecretFields, recordIdSchema, utcTimestampSchema } from "../../../shared/trading/ids.ts";
 import { XAUUSD_INSTRUMENT } from "../../../shared/trading/instrument.ts";
-import { parseKillSwitchState } from "../../../shared/trading/kill-switch.ts";
+import type { KillSwitchAuthority } from "../persistence/kill-switch.ts";
 import type { OrderIntent } from "../../../shared/trading/order-intent.ts";
 import type { ApprovalDecision } from "../approval/result.ts";
 import { proposalBinding } from "../approval/binding.ts";
@@ -48,7 +48,9 @@ export interface ExecutionSubmitInput {
   readonly gate: GateDecision;
   readonly binding: unknown;
   readonly quote: ExecutionQuote | null;
+  /** Ignored for authorization. The stored switch is the only source. */
   readonly killSwitch: unknown;
+  readonly killSwitchAuthority?: KillSwitchAuthority;
   readonly environment: unknown;
   readonly provenance: unknown;
   readonly requestedQuantity: number | null;
@@ -286,7 +288,7 @@ function authorize(input: ExecutionSubmitInput): { ok: true; ready: Ready } | { 
   if (input.provider.providerId !== "metaapi-cloud" || input.provider.bindingId !== binding.bindingId) {
     return { ok: false, reason: "ACCOUNT_BINDING_MISMATCH" };
   }
-  const kill = readSwitch(input.killSwitch, environment.data, input.agentRunId);
+  const kill = readAuthoritativeSwitch(input, environment.data);
   if (kill !== "open") return { ok: false, reason: kill };
   if (input.decision?.direction === "EXIT_EXISTING_POSITION") {
     return authorizeExit(input, environment.data, provenance.data, binding);
@@ -574,6 +576,7 @@ function attemptRecord(
     requestedQuantity: ready.requestedQuantity,
     quantity: ready.quantity,
     clientId: ready.command.clientId,
+    closePositionId: input.decision?.direction === "EXIT_EXISTING_POSITION" ? input.exitPosition?.positionId ?? null : null,
     state,
     brokerRequestId,
     brokerCode: safeBrokerCode(brokerCode),
@@ -629,15 +632,17 @@ function located(input: ExecutionSubmitInput): Ready | null {
   };
 }
 
-function readSwitch(
-  value: unknown,
+function readAuthoritativeSwitch(
+  input: ExecutionSubmitInput,
   environment: TradingEnvironment,
-  agentRunId: string,
 ): "open" | "KILL_SWITCH_ENGAGED" | "KILL_SWITCH_UNKNOWN" {
+  const authority = input.killSwitchAuthority;
+  if (authority == null) return "KILL_SWITCH_UNKNOWN";
   try {
-    const state = parseKillSwitchState(value);
-    if (state.environment !== environment || state.agentRunId !== agentRunId) return "KILL_SWITCH_UNKNOWN";
-    return state.engaged ? "KILL_SWITCH_ENGAGED" : "open";
+    const read = authority.read(environment, input.agentRunId);
+    if (read.status === "open") return "open";
+    if (read.status === "engaged") return "KILL_SWITCH_ENGAGED";
+    return "KILL_SWITCH_UNKNOWN";
   } catch {
     return "KILL_SWITCH_UNKNOWN";
   }
@@ -693,6 +698,7 @@ function finish(
     stop: ready !== null && ready.identity.length > 0 ? ready.stop : null,
     takeProfit: ready !== null && ready.identity.length > 0 ? ready.takeProfit : null,
     quantity: ready !== null && ready.identity.length > 0 ? ready.quantity : null,
+    closePositionId: input.decision?.direction === "EXIT_EXISTING_POSITION" ? input.exitPosition?.positionId ?? null : null,
     brokerRequestId,
     brokerCode: code,
     fill,
@@ -813,6 +819,7 @@ function closed(input: ExecutionSubmitInput, reason: "SYSTEM_ERROR" | "CREDENTIA
     stop: null,
     takeProfit: null,
     quantity: null,
+    closePositionId: null,
     brokerRequestId: null,
     brokerCode: null,
     fill: null,

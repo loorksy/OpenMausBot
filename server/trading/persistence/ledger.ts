@@ -109,6 +109,16 @@ export function readAttempts(db: DatabaseSync, identity: string): ExecutionAttem
   return attempts(db, identity);
 }
 
+export function readAttemptsByAgent(db: DatabaseSync, agentRunId: string): ExecutionAttemptRecord[] {
+  const rows = db.prepare(`
+    SELECT payload_json
+    FROM execution_attempts
+    WHERE agent_run_id = ?
+    ORDER BY sequence ASC
+  `).all(agentRunId) as Array<{ payload_json: string }>;
+  return rows.map((row) => readAttempt(row.payload_json));
+}
+
 function attempts(db: DatabaseSync, identity: string): ExecutionAttemptRecord[] {
   const rows = db.prepare(`
     SELECT payload_json

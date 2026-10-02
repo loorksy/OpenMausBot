@@ -167,8 +167,8 @@ export function TradingDesk({ section }: { section: (typeof SECTIONS)[number] })
       </header>
       <section aria-label="Safety" className="mb-4 rounded border border-white/10 p-3">
         <h2 className="text-sm text-ink-secondary">السلامة</h2>
-        <p>مفتاح الإيقاف: {room?.killSwitch.state === "engaged" ? "مفعّل" : room?.killSwitch.state === "open" ? "غير مفعّل" : "غير معروف"}</p>
-        <p>{room?.pause.paused ? "الإيقاف المؤقت مفعّل. هذا ليس مفتاح الإيقاف." : "لا إيقاف مؤقت مسجل."}</p>
+        {room === null ? <p>مفتاح الإيقاف غير متاح.</p> : <p>مفتاح الإيقاف: {room.killSwitch.state === "engaged" ? "مفعّل" : room.killSwitch.state === "open" ? "غير مفعّل" : "غير معروف"}</p>}
+        {room === null ? <p>الإيقاف المؤقت غير متاح.</p> : <p>{room.pause.paused ? "الإيقاف المؤقت مفعّل. هذا ليس مفتاح الإيقاف." : "لا إيقاف مؤقت مسجل."}</p>}
         {room?.nextAction.safety.autonomousOrdersBlocked ? <p>الأوامر الذاتية ممنوعة.</p> : null}
         {error ? <p role="alert">{error}</p> : null}
       </section>
@@ -180,8 +180,8 @@ export function TradingDesk({ section }: { section: (typeof SECTIONS)[number] })
       </section>
       <section aria-label="Agent presence" className="mb-4">
         <h2 className="text-sm text-ink-secondary">حضور الوكيل</h2>
-        <p>{label(PRESENCE_AR, room?.agentPresence)}</p>
-        <p dir="ltr">{room?.agentPresence ?? "IDLE"}</p>
+        {room === null ? <p>الحضور غير متاح.</p> : <p>{label(PRESENCE_AR, room.agentPresence)}</p>}
+        <p dir="ltr">{room === null ? "UNAVAILABLE" : room.agentPresence}</p>
       </section>
       <section aria-label="Next action" className="mb-4">
         <h2 className="text-sm text-ink-secondary">الخطوة التالية</h2>
@@ -198,34 +198,42 @@ export function TradingDesk({ section }: { section: (typeof SECTIONS)[number] })
       </section>
       <section aria-label="Decision" className="mb-4">
         <h2 className="text-sm text-ink-secondary">القرار</h2>
-        {room?.decision ? (
+        {room === null ? <p>القرار غير متاح.</p> : room.decision ? (
           <>
             <p dir="ltr">{room.decision.direction} · {room.decision.status}</p>
             <p>{room.decision.thesis}</p>
             <p dir="ltr">{room.decision.stop ?? "—"} · {room.decision.targets.join(", ") || "—"}</p>
           </>
-        ) : <p>لا قرار مخزن. {room?.decisionAvailability === "NOT_AVAILABLE" ? "الغياب مسجل." : ""}</p>}
+        ) : <p>لا قرار مخزن. {room.decisionAvailability === "NOT_AVAILABLE" ? "الغياب مسجل." : ""}</p>}
       </section>
       <section aria-label="Risk and policy" className="mb-4">
         <h2 className="text-sm text-ink-secondary">المخاطر والسياسة</h2>
-        <p>{room?.risk ? room.risk.state : "لا تقييم مخاطر في اللقطة"}</p>
-        <p>{room?.policy ? `${room.policy.state} · ${room.policy.progression}` : "لا تقييم سياسة في اللقطة"}</p>
-        <p>{room?.gate ? room.gate.state : "لا بوابة تنفيذ في اللقطة"}</p>
+        {room === null ? <p>المخاطر والسياسة غير متاحة.</p> : (
+          <>
+            <p>{room.risk ? room.risk.state : "لا تقييم مخاطر في اللقطة"}</p>
+            <p>{room.policy ? `${room.policy.state} · ${room.policy.progression}` : "لا تقييم سياسة في اللقطة"}</p>
+            <p>{room.gate ? room.gate.state : "لا بوابة تنفيذ في اللقطة"}</p>
+          </>
+        )}
       </section>
       <section aria-label="Position" className="mb-4">
         <h2 className="text-sm text-ink-secondary">الصفقة والتنفيذ</h2>
-        <p>{room?.position.availability === "NOT_AVAILABLE" ? "غير متاح" : label(POSITION_AR, room?.position.state)}</p>
-        {room?.position.brokerPositionId ? <p dir="ltr">{room.position.direction} {room.position.brokerQuantity} · {room.position.brokerPositionId}</p> : null}
-        <p>{room?.execution ? room.execution.state : "لا تنفيذ مسجل"}</p>
-        <p>{room?.execution?.brokerCalled ? "الوسيط استُدعي." : "لا تأكيد أن الوسيط استُدعي."}</p>
-        <p>{room?.reconciliation ? room.reconciliation.state : "لا مطابقة في اللقطة"}</p>
-        {room?.exit.authorizationRequired ? <p>الخروج مقترح ويحتاج تفويضًا. لم يُرسل أمر إغلاق.</p> : null}
-        {room?.exit.execution ? <p dir="ltr">exit {room.exit.execution.state}</p> : null}
+        {room === null ? <p>الصفقة والتنفيذ غير متاحين.</p> : (
+          <>
+            <p>{room.position.availability === "NOT_AVAILABLE" ? "غير متاح" : label(POSITION_AR, room.position.state)}</p>
+            {room.position.brokerPositionId ? <p dir="ltr">{room.position.direction} {room.position.brokerQuantity} · {room.position.brokerPositionId}</p> : null}
+            <p>{room.execution ? room.execution.state : "لا تنفيذ مسجل"}</p>
+            <p>{room.execution?.brokerCalled ? "الوسيط استُدعي." : "لا تأكيد أن الوسيط استُدعي."}</p>
+            <p>{room.reconciliation ? room.reconciliation.state : "لا مطابقة في اللقطة"}</p>
+            {room.exit.authorizationRequired ? <p>الخروج مقترح ويحتاج تفويضًا. لم يُرسل أمر إغلاق.</p> : null}
+            {room.exit.execution ? <p dir="ltr">exit {room.exit.execution.state}</p> : null}
+          </>
+        )}
       </section>
       <section aria-label="Monitoring" className="mb-4">
         <h2 className="text-sm text-ink-secondary">المراقبة</h2>
-        {room?.monitoring.availability === "NOT_AVAILABLE" ? <p>لا دورة مراقبة مخزنة.</p> : (
-          <p dir="ltr">{room?.monitoring.availability} · {room?.monitoring.decision ?? "—"} · {room?.monitoring.observedAt ?? ""}</p>
+        {room === null ? <p>المراقبة غير متاحة.</p> : room.monitoring.availability === "NOT_AVAILABLE" ? <p>لا دورة مراقبة مخزنة.</p> : (
+          <p dir="ltr">{room.monitoring.availability} · {room.monitoring.decision ?? "—"} · {room.monitoring.observedAt ?? ""}</p>
         )}
       </section>
       <section aria-label="Chart" className="mb-4" dir="ltr">
@@ -250,7 +258,7 @@ export function TradingDesk({ section }: { section: (typeof SECTIONS)[number] })
       </section>
       <section aria-label="Conversation" className="mb-4">
         <h2 className="text-sm text-ink-secondary">المحادثة</h2>
-        {room?.attachedConversation.availability === "ATTACHED" ? (
+        {room === null ? <p>المحادثة غير متاحة.</p> : room.attachedConversation.availability === "ATTACHED" ? (
           <p dir="ltr">thread {room.attachedConversation.threadId} · turn {room.attachedConversation.providerTurnId}</p>
         ) : <p>لا محادثة مرتبطة. لن تُنشأ محادثة جديدة من هنا.</p>}
       </section>
