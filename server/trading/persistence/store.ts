@@ -13,16 +13,18 @@ import type { BrokerAccountSnapshot } from "../reconciliation/snapshot.ts";
 import { canonicalJson } from "../replay/hash.ts";
 import { createJobRepository, type JobRepository } from "./jobs.ts";
 import { createDurableExecutionLedger, insertEvent, readAttempts } from "./ledger.ts";
+import { createOccurrenceRepository, type OccurrenceRepository } from "./occurrences.ts";
 import type { PersistedExecutionRequest } from "./record.ts";
 import { TRADING_STORE_SCHEMA_SQL } from "./schema.ts";
 
 /** First durable trading schema. Version 0 had no tables. Opening still
  * requires an explicit path and environment; a zero-argument call does not
  * create a database. */
-/** Phase 9 ledger is version 1. Phase 10 adds job tables as version 2. */
-export const TRADING_STORE_SCHEMA_VERSION = 2 as const;
+/** Phase 9 ledger is version 1. Phase 10 adds job tables as version 2.
+ * Phase 10.3 step 1 adds trading_occurrences as version 3. */
+export const TRADING_STORE_SCHEMA_VERSION = 3 as const;
 
-const TRADING_STORE_SCHEMA_VERSIONS = [0, 1, TRADING_STORE_SCHEMA_VERSION] as const;
+const TRADING_STORE_SCHEMA_VERSIONS = [0, 1, 2, TRADING_STORE_SCHEMA_VERSION] as const;
 
 export interface OpenTradingStoreInput {
   readonly path: string;
@@ -46,6 +48,7 @@ export interface TradingStore {
   readReconciliations(identity: string): readonly ReconciliationResult[];
   countFindings(reconciliationRunId: string): number;
   readonly jobs: JobRepository;
+  readonly occurrences: OccurrenceRepository;
   close(): void;
 }
 
@@ -183,6 +186,7 @@ function migrate(db: DatabaseSync, environment: TradingEnvironment): void {
 function store(db: DatabaseSync, path: string, environment: TradingEnvironment): TradingStore {
   const ledger = createDurableExecutionLedger(db, environment);
   const jobs = createJobRepository(db, environment);
+  const occurrences = createOccurrenceRepository(db, environment);
   return {
     schemaVersion: TRADING_STORE_SCHEMA_VERSION,
     environment,
@@ -406,6 +410,7 @@ function store(db: DatabaseSync, path: string, environment: TradingEnvironment):
       );
     },
     jobs,
+    occurrences,
     close() {
       db.close();
     },

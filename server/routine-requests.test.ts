@@ -1858,6 +1858,72 @@ describe("cross-bot routine targeting", () => {
   });
 });
 
+describe("XAUUSD routine marker", () => {
+  const marker = {
+    environment: "PAPER" as const,
+    autonomyLevel: 2 as const,
+    permissions: ["market.read", "decision.propose"] as const,
+  };
+
+  it("carries a confirmed marker onto the routine and leaves an unconfirmed proposal unscheduled", async () => {
+    const { service, store, routines } = harness();
+    const proposed = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-a",
+      proposal: createProposal({ xauusd: marker }),
+    });
+    expect(routines.listRoutines()).toHaveLength(0);
+    expect(proposed.detail).toContain("XAUUSD: PAPER, autonomy 2, permissions market.read, decision.propose");
+    expect(proposed.detail).toContain("Broker submission stays closed");
+    const card = store.messagesFor("thread-a")[0]!.card!;
+    expect(card.routineRequest?.operation).toMatchObject({
+      action: "create",
+      routine: { xauusd: marker },
+    });
+    expect(JSON.stringify(card)).not.toMatch(/token|apiKey|password|accountId/i);
+    service.resolve({
+      botId: "bot-a",
+      threadId: "thread-a",
+      requestId: proposed.requestId,
+      behavior: "allow",
+    });
+    expect(routines.listRoutines()[0]?.xauusd).toEqual(marker);
+  });
+
+  it("rejects a secret or unknown permission before a card exists", async () => {
+    const { service, store, routines } = harness();
+    await expect(service.propose({
+      botId: "bot-a",
+      threadId: "thread-a",
+      proposal: createProposal({ xauusd: { ...marker, permissions: ["execute"] } }),
+    })).rejects.toThrow(/unknown trading permission/);
+    await expect(service.propose({
+      botId: "bot-a",
+      threadId: "thread-a",
+      proposal: createProposal({ xauusd: { ...marker, token: "metaapi-token" } }),
+    })).rejects.toThrow(/secret fields/);
+    expect(store.messagesFor("thread-a")).toHaveLength(0);
+    expect(routines.listRoutines()).toHaveLength(0);
+  });
+
+  it("treats a different environment as a different routine", async () => {
+    const { service, routines } = harness();
+    const first = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-a",
+      proposal: createProposal({ xauusd: marker }),
+    });
+    service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: first.requestId, behavior: "allow" });
+    const second = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-b",
+      proposal: createProposal({ xauusd: { ...marker, environment: "LIVE" } }),
+    });
+    service.resolve({ botId: "bot-a", threadId: "thread-b", requestId: second.requestId, behavior: "allow" });
+    expect(routines.listRoutines()).toHaveLength(2);
+  });
+});
+
 describe("consequenceLine", () => {
   it("uses singular wording for one run a day and one day a week", () => {
     expect(consequenceLine({ type: "interval", everyMinutes: 1440 })).toBe(

@@ -1,6 +1,9 @@
 import type { AutonomyLevel } from "../../../shared/trading/autonomy.ts";
 import type { TradingEnvironment } from "../../../shared/trading/environment.ts";
+import { TRADING_PERMISSIONS, type TradingPermission } from "../../../shared/trading/permissions.ts";
 import type { ToolJsonSchema } from "./schema.ts";
+
+export { TRADING_PERMISSIONS, type TradingPermission };
 
 export const XAUUSD_TOOL_CATALOG_VERSION = "xauusd-tools-2";
 
@@ -18,15 +21,6 @@ export const FORBIDDEN_EXECUTION_TOOL_NAMES = [
 ] as const;
 
 export type ForbiddenExecutionToolName = (typeof FORBIDDEN_EXECUTION_TOOL_NAMES)[number];
-
-export const TRADING_PERMISSIONS = [
-  "market.read",
-  "decision.propose",
-  "intent.propose",
-  "specialist.consult",
-] as const;
-
-export type TradingPermission = (typeof TRADING_PERMISSIONS)[number];
 
 export type ToolAuditClass = "discovery" | "read" | "propose";
 export type ToolSensitivity = "internal" | "external-untrusted";

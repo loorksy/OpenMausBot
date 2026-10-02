@@ -145,4 +145,43 @@ CREATE TABLE IF NOT EXISTS xauusd_job_wakes (
   payload_json TEXT NOT NULL,
   UNIQUE (job_id, scheduled_for)
 );
+CREATE TABLE IF NOT EXISTS trading_occurrences (
+  occurrence_id TEXT PRIMARY KEY,
+  routine_id TEXT NOT NULL,
+  routine_run_id TEXT UNIQUE,
+  thread_id TEXT NOT NULL,
+  provider_turn_id TEXT,
+  agent_run_id TEXT NOT NULL,
+  instrument TEXT NOT NULL CHECK (instrument = 'XAUUSD'),
+  environment TEXT NOT NULL CHECK (environment IN ('SIMULATOR', 'PAPER', 'LIVE')),
+  provenance TEXT CHECK (
+    provenance IS NULL OR provenance IN ('LIVE', 'STALE', 'SIMULATOR', 'UNAVAILABLE', 'REPLAY')
+  ),
+  snapshot_id TEXT,
+  decision_id TEXT,
+  order_intent_id TEXT,
+  risk_decision_id TEXT,
+  policy_decision_id TEXT,
+  approval_id TEXT,
+  execution_request_id TEXT,
+  reconciliation_run_id TEXT,
+  proposal_binding_hash TEXT,
+  domain_status TEXT NOT NULL CHECK (domain_status IN (
+    'turn_not_started',
+    'observing',
+    'no_trade',
+    'proposed',
+    'waiting_approval',
+    'blocked',
+    'submitted_unknown',
+    'reconciled',
+    'degraded',
+    'desynced',
+    'turn_failed'
+  )),
+  failure_code TEXT,
+  started_at TEXT NOT NULL,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS trading_occurrences_routine ON trading_occurrences(routine_id);
 `;

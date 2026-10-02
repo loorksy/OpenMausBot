@@ -1595,6 +1595,40 @@ describe("agents-proxy MCP surface", () => {
     expect(res.result.isError).toBeFalsy();
   });
 
+  it("forwards an XAUUSD declaration and refuses a secret field inside it", async () => {
+    lastRoutineRequestBody = null;
+    const res = await callTool("propose_routine", {
+      name: "Gold watch",
+      instructions: "Review XAUUSD.",
+      schedule: { type: "weekly", time: "09:00", weekdays: ["monday"] },
+      xauusd: {
+        environment: "SIMULATOR",
+        autonomy_level: 0,
+        permissions: ["market.read"],
+      },
+    });
+    expect(res.result.isError).toBeFalsy();
+    expect(lastRoutineRequestBody.routine.xauusd).toEqual({
+      environment: "SIMULATOR",
+      autonomyLevel: 0,
+      permissions: ["market.read"],
+    });
+    lastRoutineRequestBody = null;
+    const rejected = await callTool("propose_routine", {
+      name: "Gold watch",
+      instructions: "Review XAUUSD.",
+      schedule: { type: "weekly", time: "09:00", weekdays: ["monday"] },
+      xauusd: {
+        environment: "PAPER",
+        autonomy_level: 1,
+        permissions: ["market.read"],
+        token: "metaapi-token",
+      },
+    });
+    expect(rejected.result.isError).toBe(true);
+    expect(lastRoutineRequestBody).toBeNull();
+  });
+
   it("forwards for_bot_id when the routine is for another bot", async () => {
     lastRoutineRequestBody = null;
     const res = await callTool("propose_routine", {

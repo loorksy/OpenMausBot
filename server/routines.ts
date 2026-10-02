@@ -8,6 +8,7 @@ import type { RuntimeEvent } from "./contracts.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { redactSecretsInText } from "./redact.ts";
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
+import { parseXauUsdRoutineMarker, type XauUsdRoutineMarker } from "../shared/trading/routine-marker.ts";
 import type { RoutineRequestOperation } from "../shared/routine-request.ts";
 import { normalizeCronSchedule, nextCronRuns, type RoutineCronSchedule } from "../shared/routine-schedule.ts";
 import { isRoutineProblemRun } from "../shared/routines.ts";
@@ -109,6 +110,8 @@ export interface Routine {
   sourceThreadId?: string;
   /** Stable visible report destination; execution still gets a fresh task. */
   resultsThreadId?: string;
+  /** Optional XAUUSD monitoring declaration. Absent on an ordinary routine. */
+  xauusd?: XauUsdRoutineMarker;
   /** Server-private: added from the organization's library. Never on the
    * wire (routineWithHealth drops it); packageStamps() reads it. */
   installedPackage?: RoutinePackageStamp;
@@ -126,6 +129,15 @@ export interface RoutinePackageStamp {
 }
 
 const HASH = /^[a-f0-9]{64}$/;
+function loadXauUsdMarker(value: unknown): XauUsdRoutineMarker | undefined | "rejected" {
+  if (value === undefined) return undefined;
+  try {
+    return parseXauUsdRoutineMarker(value);
+  } catch {
+    return "rejected";
+  }
+}
+
 function loadInstalledPackage(value: unknown): RoutinePackageStamp | undefined {
   if (!value || typeof value !== "object") return undefined;
   const stamp = value as Partial<RoutinePackageStamp>;
@@ -243,6 +255,8 @@ export interface RoutineInput {
   overlap?: "skip" | "queue";
   /** Omission preserves routing; null creates a new dedicated results task. */
   resultsThreadId?: string | null;
+  /** `null` removes an existing declaration; omission preserves it on updates. */
+  xauusd?: XauUsdRoutineMarker | null;
 }
 
 interface RoutineFile {
@@ -761,6 +775,10 @@ function sanitizeInput(input: RoutineInput, after: number): Omit<Routine, "id" |
   if (continuity && target === "room-goal") {
     throw new Error("Room goals do not carry continuity yet");
   }
+  if (input.xauusd != null && target === "room-goal") {
+    throw new Error("Room goals cannot declare an XAUUSD routine");
+  }
+  const xauusd = input.xauusd == null ? undefined : parseXauUsdRoutineMarker(input.xauusd);
   return {
     name,
     prompt,
@@ -775,6 +793,7 @@ function sanitizeInput(input: RoutineInput, after: number): Omit<Routine, "id" |
     attachments,
     ...(continuity ? { continuity: true } : {}),
     ...(input.overlap === "queue" ? { overlap: "queue" as const } : {}),
+    ...(xauusd ? { xauusd } : {}),
   };
 }
 
@@ -799,7 +818,10 @@ export class RoutineManager {
         ? disk.routines.flatMap((routine) => {
             const schedule = loadSchedule(routine.schedule, this.now());
             if (!schedule) return [];
+            const xauusd = loadXauUsdMarker(routine.xauusd);
+            if (xauusd === "rejected") return [];
             const target = loadTarget(routine.target);
+            if (xauusd && target === "room-goal") return [];
             const loaded: Routine = {
               ...routine,
               schedule,
@@ -814,7 +836,9 @@ export class RoutineManager {
               skippedRuns: Number.isSafeInteger(routine.skippedRuns) && routine.skippedRuns! > 0 ? routine.skippedRuns : undefined,
               lastSkippedAt: Number.isSafeInteger(routine.lastSkippedAt) && routine.lastSkippedAt! >= 0 && routine.lastSkippedAt! <= MAX_DATE_MS ? routine.lastSkippedAt : undefined,
               installedPackage: loadInstalledPackage(routine.installedPackage),
+              ...(xauusd ? { xauusd } : {}),
             };
+            if (!xauusd) delete loaded.xauusd;
             if (loaded.timeoutMinutes === undefined) delete loaded.timeoutMinutes;
             if (loaded.installedPackage === undefined) delete loaded.installedPackage;
             delete loaded.failureStreak;
@@ -1097,6 +1121,7 @@ export class RoutineManager {
       attachments: patch.attachments ?? routine.attachments,
       continuity: patch.continuity ?? routine.continuity,
       overlap: Object.hasOwn(patch, "overlap") ? patch.overlap : routine.overlap,
+      xauusd: Object.hasOwn(patch, "xauusd") ? patch.xauusd : routine.xauusd,
     }, now);
     if (this.targetState(clean) === "missing") throw new Error(this.missingTargetMessage(clean.target));
     const scheduleChanged = JSON.stringify(clean.schedule) !== JSON.stringify(routine.schedule);
@@ -1124,6 +1149,7 @@ export class RoutineManager {
       // rather than false, so switching continuity off has to delete it.
       if (!clean.continuity) delete routine.continuity;
       if (clean.overlap !== "queue") delete routine.overlap;
+      if (!clean.xauusd) delete routine.xauusd;
       if (Object.hasOwn(patch, "timeoutMinutes") && patch.timeoutMinutes == null) {
         delete routine.timeoutMinutes;
       }

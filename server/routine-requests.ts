@@ -26,6 +26,7 @@ import type {
   RoutineRequestSchedule,
   RoutineRequestScheduleChanges,
 } from "../shared/routine-request.ts";
+import { parseXauUsdRoutineMarker, type XauUsdRoutineMarker } from "../shared/trading/routine-marker.ts";
 
 const WEEKDAY_NUMBER = {
   sunday: 0,
@@ -85,6 +86,7 @@ const routineToolDefinitionSchema = z.object({
   timeoutMinutes: z.number().nullable().optional(),
   continuity: z.boolean().optional(),
   overlap: z.enum(["skip", "queue"]).optional(),
+  xauusd: z.unknown().optional(),
 }).strict();
 
 const routineToolChangesSchema = routineToolDefinitionSchema
@@ -203,6 +205,14 @@ const storedScheduleChangesSchema = z.discriminatedUnion("type", [
     });
   }
 });
+const storedXauUsdMarkerSchema = z.custom<XauUsdRoutineMarker>((value) => {
+  try {
+    parseXauUsdRoutineMarker(value);
+    return true;
+  } catch {
+    return false;
+  }
+});
 const storedDefinitionSchema = z.object({
   name: z.string().trim().min(1).max(80),
   instructions: z.string().trim().min(1).max(20_000),
@@ -212,13 +222,15 @@ const storedDefinitionSchema = z.object({
   timeoutMinutes: z.number().int().min(5).max(240).optional(),
   continuity: z.boolean().optional(),
   overlap: z.enum(["skip", "queue"]).optional(),
+  xauusd: storedXauUsdMarkerSchema.optional(),
 }).strict();
 const storedChangesSchema = storedDefinitionSchema
-  .omit({ schedule: true, timeoutMinutes: true })
+  .omit({ schedule: true, timeoutMinutes: true, xauusd: true })
   .partial()
   .extend({
     schedule: storedScheduleChangesSchema.optional(),
     timeoutMinutes: z.number().int().min(5).max(240).nullable().optional(),
+    xauusd: storedXauUsdMarkerSchema.nullable().optional(),
   })
   .strict()
   .refine(
@@ -561,6 +573,7 @@ function normalizeDefinition(input: RoutineToolDefinitionInput, now: number): Ro
     ...(timeoutMinutes == null ? {} : { timeoutMinutes }),
     ...(input.continuity === true ? { continuity: true } : {}),
     ...(input.overlap === "queue" ? { overlap: "queue" as const } : {}),
+    ...(input.xauusd === undefined ? {} : { xauusd: parseXauUsdRoutineMarker(input.xauusd) }),
   };
 }
 
@@ -574,7 +587,20 @@ function normalizeChanges(input: RoutineToolChangesInput, now: number): RoutineR
   if (input.timeoutMinutes !== undefined) changes.timeoutMinutes = timeout(input.timeoutMinutes);
   if (input.continuity !== undefined) changes.continuity = input.continuity === true;
   if (input.overlap !== undefined) changes.overlap = input.overlap;
+  if (input.xauusd === null) changes.xauusd = null;
+  else if (input.xauusd !== undefined) changes.xauusd = parseXauUsdRoutineMarker(input.xauusd);
   return changes;
+}
+
+function sameXauUsdMarker(
+  left: XauUsdRoutineMarker | undefined,
+  right: XauUsdRoutineMarker | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.environment === right.environment
+    && left.autonomyLevel === right.autonomyLevel
+    && left.permissions.length === right.permissions.length
+    && left.permissions.every((permission, index) => permission === right.permissions[index]);
 }
 
 function routineId(value: string): string {
@@ -805,16 +831,19 @@ function effectiveDefinition(operation: RoutineRequestOperation, manager: Routin
     ...(existing.timeoutMinutes === undefined ? {} : { timeoutMinutes: existing.timeoutMinutes }),
     ...(existing.continuity ? { continuity: true } : {}),
     ...(existing.overlap ? { overlap: existing.overlap } : {}),
+    ...(existing.xauusd ? { xauusd: existing.xauusd } : {}),
   };
   if (operation.action !== "update") return base;
-  const { schedule, timeoutMinutes, ...changes } = operation.changes;
+  const { schedule, timeoutMinutes, xauusd, ...changes } = operation.changes;
   const merged: RoutineRequestDefinition = {
     ...base,
     ...changes,
     ...(schedule === undefined ? {} : { schedule: effectiveSchedule(base.schedule, schedule) }),
+    ...(xauusd ? { xauusd } : {}),
   };
   if (timeoutMinutes === null) delete merged.timeoutMinutes;
   else if (timeoutMinutes !== undefined) merged.timeoutMinutes = timeoutMinutes;
+  if (xauusd === null) delete merged.xauusd;
   return merged;
 }
 
@@ -889,6 +918,9 @@ function cardCopy(
       `Run limit: ${definition.timeoutMinutes === undefined ? "No limit" : `${definition.timeoutMinutes} minutes`}`,
       `Continuity: ${definition.continuity ? "Carries the previous run's report into the next run" : "Each run starts fresh"}`,
       `While busy: ${definition.overlap === "queue" ? "Queue one scheduled run; skip further occurrences until it starts" : "Skip overlapping scheduled occurrences"}`,
+      ...(definition.xauusd
+        ? [`XAUUSD: ${definition.xauusd.environment}, autonomy ${definition.xauusd.autonomyLevel}, permissions ${definition.xauusd.permissions.join(", ") || "none"}. Confirmation schedules this monitoring declaration. Broker submission stays closed.`]
+        : []),
       // Last before the instructions: the one sentence that says what
       // confirming actually does, in the reader's terms.
       ...(operation.action === "create" || operation.action === "update"
@@ -915,6 +947,7 @@ function inputFromDefinition(definition: RoutineRequestDefinition, botId: string
     ...(definition.timeoutMinutes === undefined ? {} : { timeoutMinutes: definition.timeoutMinutes }),
     ...(definition.continuity ? { continuity: true } : {}),
     ...(definition.overlap === "queue" ? { overlap: "queue" as const } : {}),
+    ...(definition.xauusd ? { xauusd: definition.xauusd } : {}),
   };
 }
 
@@ -932,6 +965,7 @@ function updateFromChanges(
   if (changes.timeoutMinutes !== undefined) patch.timeoutMinutes = changes.timeoutMinutes;
   if (changes.continuity !== undefined) patch.continuity = changes.continuity;
   if (changes.overlap !== undefined) patch.overlap = changes.overlap;
+  if (Object.hasOwn(changes, "xauusd")) patch.xauusd = changes.xauusd;
   return patch;
 }
 
@@ -1007,6 +1041,7 @@ function revalidateOperation(operation: RoutineRequestOperation, manager: Routin
         || routine.timeoutMinutes !== definition.timeoutMinutes
         || Boolean(routine.continuity) !== Boolean(definition.continuity)
         || (routine.overlap ?? "skip") !== (definition.overlap ?? "skip")
+        || !sameXauUsdMarker(routine.xauusd, definition.xauusd)
         || (routine.attachments?.length ?? 0) > 0) return false;
       // An omitted start means "every N minutes", not a new phase each time
       // the model retries. Explicit starts and all other constraints stay exact.

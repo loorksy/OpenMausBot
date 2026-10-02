@@ -4,6 +4,7 @@
  * frame union and every client consumer share one home; the client file
  * re-exports these under the same names. */
 import type { RoutineCronSchedule } from "./routine-schedule.ts";
+import type { XauUsdRoutineMarker } from "./trading/routine-marker.ts";
 
 export interface RoutineIntervalWindow {
   start: string;
@@ -104,6 +105,9 @@ export interface Routine {
   attachments?: RoutineContextAttachment[];
   sourceThreadId?: string;
   resultsThreadId?: string;
+  /** Optional XAUUSD monitoring declaration. Absent on an ordinary routine.
+   * It is not an execution grant. */
+  xauusd?: XauUsdRoutineMarker;
   nextRunAt: number | null;
   createdAt: number;
   updatedAt: number;
@@ -161,4 +165,6 @@ export interface RoutineInput {
   attachments?: RoutineContextAttachment[];
   /** Omission preserves routing; null creates a new dedicated results task. */
   resultsThreadId?: string | null;
+  /** `null` removes an existing declaration; omission preserves it on updates. */
+  xauusd?: XauUsdRoutineMarker | null;
 }
