@@ -1,3 +1,5 @@
+import type { Decision } from "../../../shared/trading/decision.ts";
+import type { OrderIntent } from "../../../shared/trading/order-intent.ts";
 import { AUTONOMY_LEVELS } from "../../../shared/trading/autonomy.ts";
 import { assertProvenanceForEnvironment, parseTradingEnvironment } from "../../../shared/trading/environment.ts";
 import { TradingDomainError } from "../../../shared/trading/errors.ts";
@@ -47,9 +49,13 @@ export interface XauUsdToolSession {
   readonly modelFallback?: XauUsdSessionState["modelFallback"];
   readonly ignoredApprovalMode: XauUsdTurnGrant["approvalMode"];
   readonly executionAuthority: false;
+  readonly occurrenceId: string | null;
+  readonly runtimeThreadId: string;
   readonly invocations: readonly string[];
   readonly tradingEvents: readonly TradingEvent[];
   readonly runtimeEvents: readonly RuntimeEvent[];
+  decisions(): readonly Decision[];
+  intents(): readonly OrderIntent[];
   validate(name: string, args: unknown): void;
   execute(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<XauUsdToolResult>;
   close(): Promise<void>;
@@ -208,9 +214,13 @@ export function createXauUsdToolSession(grant: XauUsdTurnGrant): XauUsdToolSessi
     ...(modelFallback ? { modelFallback } : {}),
     ignoredApprovalMode: grant.approvalMode,
     executionAuthority: false,
+    occurrenceId: grant.correlation.occurrenceId ?? null,
+    runtimeThreadId: grant.correlation.runtimeThreadId,
     invocations,
     tradingEvents,
     runtimeEvents,
+    decisions: () => [...state.decisions.values()],
+    intents: () => [...state.intents.values()],
     validate(name, args) {
       if (closed) throw new Error("XAUUSD tool session is closed");
       if (!advertised.has(name)) throw new Error(`tool ${name} is not available`);

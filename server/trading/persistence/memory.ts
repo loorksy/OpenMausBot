@@ -6,6 +6,14 @@ import { assertNoSecretFields, seal } from "../../../shared/trading/ids.ts";
 import type { TradingMemoryRecord } from "../memory/record.ts";
 import { proposeLearningChange } from "../memory/record.ts";
 
+export interface StoredLearning {
+  readonly revisionId: string;
+  readonly target: string;
+  readonly recordedAt: string;
+  readonly note: string;
+  readonly fields: readonly string[];
+}
+
 export interface MemoryRepository {
   append(record: TradingMemoryRecord): { readonly inserted: boolean };
   read(occurrenceId: string): readonly TradingMemoryRecord[];
@@ -15,6 +23,7 @@ export interface MemoryRepository {
     readonly note: string;
     readonly recordedAt: string;
   }): { readonly accepted: boolean; readonly reason?: string; readonly revisionId?: string };
+  listLearning(): readonly StoredLearning[];
 }
 
 export function createMemoryRepository(db: DatabaseSync, environment: TradingEnvironment): MemoryRepository {
@@ -69,6 +78,33 @@ export function createMemoryRepository(db: DatabaseSync, environment: TradingEnv
         ).run(proposed.revisionId, proposed.target, input.recordedAt, payload);
       }
       return { accepted: true, revisionId: proposed.revisionId };
+    },
+    listLearning() {
+      const rows = db.prepare(
+        "SELECT payload_json, recorded_at FROM trading_learning WHERE recorded_at IS NOT NULL ORDER BY recorded_at ASC, revision_id ASC",
+      ).all() as Array<{ payload_json: string; recorded_at: string }>;
+      return rows.map((row) => {
+        let parsed: { revisionId?: unknown; target?: unknown; note?: unknown; fields?: unknown };
+        try {
+          parsed = JSON.parse(row.payload_json) as typeof parsed;
+        } catch {
+          throw new TradingDomainError("trading_store_rejected", "Trading learning was unreadable. Failing closed.");
+        }
+        if (typeof parsed.revisionId !== "string" || typeof parsed.target !== "string" || typeof parsed.note !== "string" || !Array.isArray(parsed.fields)) {
+          throw new TradingDomainError("trading_store_rejected", "Trading learning was unreadable. Failing closed.");
+        }
+        const fields = parsed.fields.filter((field): field is string => typeof field === "string");
+        if (fields.length !== parsed.fields.length) {
+          throw new TradingDomainError("trading_store_rejected", "Trading learning was unreadable. Failing closed.");
+        }
+        return seal({
+          revisionId: parsed.revisionId,
+          target: parsed.target,
+          recordedAt: row.recorded_at,
+          note: parsed.note,
+          fields,
+        });
+      });
     },
   };
 }

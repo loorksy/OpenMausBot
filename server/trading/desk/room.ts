@@ -8,6 +8,7 @@ import { derivePositionLifecycle, type PositionLifecycleInput, type PositionLife
 import type { MonitoringDecisionName } from "../monitoring/cycle.ts";
 import { correlateNativeConversation } from "../occurrence/correlation.ts";
 import type { OccurrenceDomainStatus } from "../occurrence/identity.ts";
+import type { TradingReview } from "../review/record.ts";
 
 /** Presentation presence. EXECUTING is intentionally absent: the ledger
  * cannot distinguish an in-flight reserve from SUBMISSION_UNKNOWN. */
@@ -183,7 +184,7 @@ export interface TradingRoomState {
   readonly timeline: readonly RoomTimelineEntry[];
   readonly memory: readonly { readonly recordId: string; readonly kind: string; readonly recordedAt: string; readonly body: string }[];
   readonly learning: { readonly accepted: boolean; readonly reason: string | null; readonly revisionId: string | null; readonly target: string | null } | null;
-  readonly review: "NOT_AVAILABLE";
+  readonly review: "NOT_AVAILABLE" | TradingReview;
   readonly attachedConversation: {
     readonly availability: "ATTACHED" | "NOT_AVAILABLE";
     readonly threadId: string | null;
@@ -246,6 +247,8 @@ export interface TradingRoomInput {
   } | null;
   readonly memory: TradingRoomState["memory"];
   readonly learning: TradingRoomState["learning"];
+  /** Stored review for this occurrence. Absent stays NOT_AVAILABLE. */
+  readonly review?: TradingReview | null;
   /** When set, a different thread stays unattached. It does not select another occurrence. */
   readonly requestedThreadId?: string | null;
 }
@@ -322,7 +325,7 @@ export function projectTradingRoom(input: TradingRoomInput): TradingRoomState {
     timeline,
     memory: input.memory,
     learning: input.learning,
-    review: "NOT_AVAILABLE",
+    review: input.source === "store" && input.review ? input.review : "NOT_AVAILABLE",
     attachedConversation,
   };
 }
@@ -598,22 +601,4 @@ function latestOf(timeline: readonly RoomTimelineEntry[], types: ReadonlySet<str
 }
 
 /** One usable XAUUSD position. More than one, or an unusable row, is ambiguous. */
-export function selectBrokerPosition(positions: readonly {
-  readonly positionId: string;
-  readonly symbol: string;
-  readonly direction: string | null;
-  readonly volume: number;
-}[]): { readonly ambiguous: true } | { readonly ambiguous: false; readonly positionId: string | null; readonly direction: "LONG" | "SHORT" | null; readonly quantity: number | null } {
-  const own = positions.filter((item) => item.symbol === "XAUUSD");
-  const usable = (item: (typeof own)[number]): item is { positionId: string; symbol: string; direction: "LONG" | "SHORT"; volume: number } =>
-    item.positionId.trim().length > 0
-    && (item.direction === "LONG" || item.direction === "SHORT")
-    && Number.isFinite(item.volume)
-    && item.volume > 0;
-  if (own.length > 1 || own.some((item) => !usable(item))) return { ambiguous: true };
-  const one = own[0];
-  if (one === undefined || !usable(one)) {
-    return { ambiguous: false, positionId: null, direction: null, quantity: null };
-  }
-  return { ambiguous: false, positionId: one.positionId, direction: one.direction, quantity: one.volume };
-}
+export { selectBrokerPosition } from "../lifecycle/position.ts";

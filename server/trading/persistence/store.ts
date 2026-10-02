@@ -18,6 +18,7 @@ import { createDurableExecutionLedger, insertEvent, readAttempts, readAttemptsBy
 import { createMonitoringCycleRepository, type MonitoringCycleRepository } from "./monitoring-cycles.ts";
 import { createApprovalRepository, type ApprovalRepository } from "./approvals.ts";
 import { createMemoryRepository, type MemoryRepository } from "./memory.ts";
+import { createReviewRepository, type ReviewRepository } from "./reviews.ts";
 import { createOccurrenceRepository, type OccurrenceRepository } from "./occurrences.ts";
 import type { PersistedExecutionRequest } from "./record.ts";
 import { TRADING_STORE_SCHEMA_SQL } from "./schema.ts";
@@ -33,10 +34,12 @@ import { TRADING_STORE_SCHEMA_SQL } from "./schema.ts";
  * enums. They are not a second state machine.
  * Version 6 adds append-only trading memory and learning revisions.
  * Version 7 adds the kill switch, sealed decision artifacts, the gate
- * citation, exit citations, and monitoring cycles. */
-export const TRADING_STORE_SCHEMA_VERSION = 7 as const;
+ * citation, exit citations, and monitoring cycles.
+ * Version 8 adds append-only post-trade reviews. Opening a version 0–7
+ * file creates that table. It does not drop or rewrite earlier rows. */
+export const TRADING_STORE_SCHEMA_VERSION = 8 as const;
 
-const TRADING_STORE_SCHEMA_VERSIONS = [0, 1, 2, 3, 4, 5, 6, TRADING_STORE_SCHEMA_VERSION] as const;
+const TRADING_STORE_SCHEMA_VERSIONS = [0, 1, 2, 3, 4, 5, 6, 7, TRADING_STORE_SCHEMA_VERSION] as const;
 
 export interface OpenTradingStoreInput {
   readonly path: string;
@@ -69,6 +72,7 @@ export interface TradingStore {
   readonly killSwitches: KillSwitchRepository;
   readonly artifacts: ArtifactRepository;
   readonly monitoringCycles: MonitoringCycleRepository;
+  readonly reviews: ReviewRepository;
   close(): void;
 }
 
@@ -264,6 +268,7 @@ function store(db: DatabaseSync, path: string, environment: TradingEnvironment):
   const killSwitches = createKillSwitchRepository(db, environment);
   const artifacts = createArtifactRepository(db, environment);
   const monitoringCycles = createMonitoringCycleRepository(db, environment);
+  const reviews = createReviewRepository(db, environment);
   return {
     schemaVersion: TRADING_STORE_SCHEMA_VERSION,
     environment,
@@ -528,6 +533,7 @@ function store(db: DatabaseSync, path: string, environment: TradingEnvironment):
     killSwitches,
     artifacts,
     monitoringCycles,
+    reviews,
     close() {
       db.close();
     },

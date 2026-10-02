@@ -25,6 +25,27 @@ export interface PositionLifecycleInput {
   readonly ambiguous: boolean;
 }
 
+/** One XAUUSD broker position, or an explicit ambiguity. Foreign symbols stay out. */
+export function selectBrokerPosition(positions: readonly {
+  readonly positionId: string;
+  readonly symbol: string;
+  readonly direction: string | null;
+  readonly volume: number;
+}[]): { readonly ambiguous: true } | { readonly ambiguous: false; readonly positionId: string | null; readonly direction: "LONG" | "SHORT" | null; readonly quantity: number | null } {
+  const own = positions.filter((item) => item.symbol === "XAUUSD");
+  const usable = (item: (typeof own)[number]): item is { positionId: string; symbol: string; direction: "LONG" | "SHORT"; volume: number } =>
+    item.positionId.trim().length > 0
+    && (item.direction === "LONG" || item.direction === "SHORT")
+    && Number.isFinite(item.volume)
+    && item.volume > 0;
+  if (own.length > 1 || own.some((item) => !usable(item))) return { ambiguous: true };
+  const one = own[0];
+  if (one === undefined || !usable(one)) {
+    return { ambiguous: false, positionId: null, direction: null, quantity: null };
+  }
+  return { ambiguous: false, positionId: one.positionId, direction: one.direction, quantity: one.volume };
+}
+
 /** Accepted is not open. A fill is not a position until reconciliation names
  * one broker position. A partial quantity stays partial and is not repaired. */
 export function derivePositionLifecycle(input: PositionLifecycleInput): PositionLifecycleState {

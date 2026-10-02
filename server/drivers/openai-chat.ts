@@ -20,7 +20,7 @@ import { appendNative } from "./native.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import type { XauUsdTurnGrant } from "../trading/agent/grant.ts";
 import { TradingDomainError } from "../../shared/trading/errors.ts";
-import { bindXauUsdProviderTurn, xauUsdRoutineTurnIsPending } from "../trading/occurrence/runtime.ts";
+import { bindXauUsdProviderTurn, sealNativeToolTurn, xauUsdRoutineTurnIsPending } from "../trading/occurrence/runtime.ts";
 
 export interface OpenAIChatMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -684,6 +684,13 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       } finally {
         approval.close();
         let cleanupFailed = false;
+        try {
+          if (tools?.xauusd) sealNativeToolTurn(tools.xauusd);
+        } catch {
+          ok = false;
+          stopReason = "error";
+          failure = "XAUUSD records could not be sealed. Failing closed.";
+        }
         try { await tools?.close(); }
         catch {
           ok = false;

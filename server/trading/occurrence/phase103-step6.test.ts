@@ -657,7 +657,7 @@ describe("phase 10.3 step 6 occurrence lifecycle", () => {
     `);
     db.close();
     const upgraded = openTradingStore({ path, environment: "PAPER" });
-    expect(upgraded.schemaVersion).toBe(7);
+    expect(upgraded.schemaVersion).toBe(8);
     const row = upgraded.occurrences.readByOccurrenceId("occ.keep");
     expect(row?.routineRunId).toBe(ROUTINE_RUN);
     expect(row?.executionState).toBeNull();

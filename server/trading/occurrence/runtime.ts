@@ -5,6 +5,7 @@ import { assertNoSecretFields, recordIdSchema, utcTimestampSchema } from "../../
 import type { XauUsdRoutineMarker } from "../../../shared/trading/routine-marker.ts";
 import type { TradingPermission } from "../../../shared/trading/permissions.ts";
 import type { XauUsdTurnGrant } from "../agent/grant.ts";
+import type { XauUsdToolSession } from "../agent/session.ts";
 import type { XauUsdMarketDataProvider } from "../infrastructure/market_data/provider.ts";
 import { readXauUsdJobMount, XAUUSD_ENVIRONMENT_ENV, XAUUSD_STORE_PATH_ENV } from "../jobs/mount.ts";
 import { routineAgentRunId, routineOccurrenceId } from "./identity.ts";
@@ -181,6 +182,46 @@ export function bindXauUsdProviderTurn(input: {
     throw new TradingDomainError("agent_run_mismatch", "Trading occurrence identity changed. Failing closed.");
   }
   return assertXauUsdRuntimeGrant(grantFromPending(pending, input));
+}
+
+/** Writes the tool session's events and sealed decision onto the open
+ * native occurrence. It does not assess risk, call the broker, or start
+ * another turn. A session with no routine occurrence is left alone. */
+export function sealNativeToolTurn(session: XauUsdToolSession): void {
+  if (session.occurrenceId === null) return;
+  const pending = pendingByThread.get(session.runtimeThreadId);
+  if (pending === undefined || pending.occurrenceId !== session.occurrenceId || pending.agentRunId !== session.agentRunId) {
+    throw new TradingDomainError(
+      "trading_store_rejected",
+      "Native trading records could not be sealed. Failing closed.",
+    );
+  }
+  pending.store.appendEvents(session.tradingEvents);
+  const decisions = session.decisions();
+  for (const decision of decisions) pending.store.artifacts.writeDecision(decision);
+  const latest = decisions[decisions.length - 1];
+  if (latest === undefined) return;
+  if (latest.agentRunId !== pending.agentRunId || latest.environment !== pending.environment) {
+    throw new TradingDomainError("agent_run_mismatch", "Sealed decision does not match the occurrence. Failing closed.");
+  }
+  const intent = [...session.intents()].reverse().find((item) => item.decisionId === latest.id) ?? null;
+  pending.store.occurrences.attachAuthoritativeRecords({
+    occurrenceId: pending.occurrenceId,
+    agentRunId: pending.agentRunId,
+    environment: pending.environment,
+    decisionId: latest.id,
+    orderIntentId: intent?.id ?? null,
+    riskDecisionId: null,
+    policyDecisionId: null,
+    approvalId: null,
+    proposalBindingHash: null,
+    failureCode: null,
+    gateDecisionId: null,
+    decision: latest,
+    risk: null,
+    policy: null,
+    gate: null,
+  });
 }
 
 export function assertXauUsdRuntimeGrant(value: XauUsdTurnGrant): XauUsdTurnGrant {

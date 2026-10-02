@@ -14,6 +14,8 @@ describe("trading room client", () => {
     expect(source).toContain("الصفقة والتنفيذ غير متاحين");
     expect(source).toContain("المراقبة غير متاحة");
     expect(source).toContain("المحادثة غير متاحة");
+    expect(source).toContain("المراجعة غير متاحة");
+    expect(source).toContain("عمر التسعيرة غير متاح");
     expect(source).not.toContain("derivePositionLifecycle");
     expect(source).toContain('room.source === "store"');
     expect(source).toContain("STORE_UNAVAILABLE");

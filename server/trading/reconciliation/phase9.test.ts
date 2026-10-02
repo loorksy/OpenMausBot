@@ -554,13 +554,13 @@ describe("persistent trading ledger", () => {
     `).run(CLIENT, AT, payload);
     db.close();
     const upgraded = applyTradingMigrations({ path, environment: "PAPER" });
-    expect(upgraded.schemaVersion).toBe(7);
+    expect(upgraded.schemaVersion).toBe(8);
     expect(upgraded.readRequest("exn.keep")?.executionRequestId).toBe("exr.keep");
     upgraded.close();
     const check = new DatabaseSync(path);
     expect((check.prepare("SELECT id FROM legacy_marker").get() as { id: string }).id).toBe("keep-me");
     expect(check.prepare("SELECT version, environment FROM schema_meta WHERE id = 1").get()).toMatchObject({
-      version: 7,
+      version: 8,
       environment: "PAPER",
     });
     check.exec("UPDATE schema_meta SET version = 0 WHERE id = 1");

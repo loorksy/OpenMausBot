@@ -299,4 +299,17 @@ CREATE TABLE IF NOT EXISTS trading_monitoring_cycles (
 );
 CREATE INDEX IF NOT EXISTS trading_monitoring_cycles_occurrence
   ON trading_monitoring_cycles(occurrence_id, observed_at);
+CREATE TABLE IF NOT EXISTS trading_reviews (
+  review_id TEXT PRIMARY KEY,
+  occurrence_id TEXT NOT NULL,
+  agent_run_id TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  supersedes TEXT,
+  recorded_at TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  UNIQUE (occurrence_id, revision)
+);
+CREATE INDEX IF NOT EXISTS trading_reviews_occurrence
+  ON trading_reviews(occurrence_id, revision);
 `;

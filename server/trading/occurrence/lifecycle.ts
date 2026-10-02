@@ -7,6 +7,7 @@ import type { ExecutionReceiptWrite, TradingOccurrence } from "../persistence/oc
 import type { TradingStore } from "../persistence/store.ts";
 import { reconcileExecution, type ReconciliationResult } from "../reconciliation/engine.ts";
 import type { BrokerAccountSnapshot } from "../reconciliation/snapshot.ts";
+import { recordPostTradeReview } from "../review/record.ts";
 
 /**
  * Execution result and reconciliation correlation for one trading occurrence.
@@ -153,6 +154,10 @@ export function reconcileOccurrenceLifecycle(input: OccurrenceReconciliationInpu
     reconciliationState: reconciliation.state,
     reconciledAt: reconciliation.reconciledAt,
     snapshotId: input.snapshot.snapshotId,
+  });
+  recordPostTradeReview(input.store, {
+    occurrenceId: recorded.occurrenceId,
+    recordedAt: reconciliation.reconciledAt,
   });
   return seal({
     schemaVersion: OCCURRENCE_LIFECYCLE_VERSION,

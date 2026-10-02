@@ -18,6 +18,7 @@ type Room = {
       ask: number | null;
       spread: number | null;
       ageMs: number | null;
+      providerTimestamp: string | null;
       candleCount: number;
     } | null;
   };
@@ -45,7 +46,25 @@ type Room = {
   };
   timeline: { eventId: string; type: string; at: string; actor: string; monitoringDecision: string | null; failureCodes: string[] }[];
   memory: { recordId: string; kind: string; recordedAt: string; body: string }[];
-  review: string;
+  learning: { accepted: boolean; reason: string | null; revisionId: string | null; target: string | null } | null;
+  review: "NOT_AVAILABLE" | {
+    reviewId: string;
+    revision: number;
+    recordedAt: string;
+    facts: {
+      decision: { id: string; direction: string; status: string; thesis: string; stop: number | null; targets: number[] };
+      risk: { id: string; state: string } | null;
+      policy: { id: string; state: string } | null;
+      approval: { id: string; approved: boolean | null } | null;
+      execution: { id: string; state: string } | null;
+      reconciliation: { id: string; state: string } | null;
+      position: { state: string; brokerPositionId: string | null } | null;
+      marketProvenance: string | null;
+      deviations: string[];
+    };
+    interpretations: { recordId: string; body: string }[];
+    learnings: { revisionId: string; target: string }[];
+  };
   attachedConversation: {
     availability: string;
     threadId: string | null;
@@ -103,6 +122,15 @@ const ACTION_AR: Record<string, string> = {
   ANALYSIS_STARTED: "بدأ تحليل ولم يُسجل اكتماله",
   WAITING_FOR_TRUSTED_MARKET: "بانتظار سوق موثوق",
   NO_RECORDED_NEXT_STEP: "لا خطوة تالية مسجلة",
+};
+
+const DIRECTION_AR: Record<string, string> = {
+  LONG: "شراء",
+  SHORT: "بيع",
+  NO_TRADE: "لا صفقة",
+  WAIT: "انتظار",
+  MANAGE_EXISTING_POSITION: "إدارة الصفقة القائمة",
+  EXIT_EXISTING_POSITION: "خروج من الصفقة القائمة",
 };
 
 const POSITION_AR: Record<string, string> = {
@@ -187,6 +215,8 @@ export function TradingDesk({ section }: { section: (typeof SECTIONS)[number] })
         <p>توفر المزود: {room?.market.provider ?? "unavailable"}</p>
         <p dir="ltr">provenance {provenance}</p>
         {room?.market.observation?.bid != null ? <p dir="ltr">{room.market.observation.bid} / {room.market.observation.ask}</p> : <p>لا تسعيرة في هذه اللقطة.</p>}
+        <p>{room?.market.observation?.ageMs != null ? `عمر التسعيرة ${room.market.observation.ageMs} مللي ثانية` : "عمر التسعيرة غير متاح."}</p>
+        {room?.market.observation?.providerTimestamp ? <p dir="ltr">{room.market.observation.providerTimestamp}</p> : null}
       </section>
       <section aria-label="Agent presence" className="mb-4">
         <h2 className="text-sm text-ink-secondary">حضور الوكيل</h2>
@@ -210,7 +240,7 @@ export function TradingDesk({ section }: { section: (typeof SECTIONS)[number] })
         <h2 className="text-sm text-ink-secondary">القرار</h2>
         {room === null ? <p>القرار غير متاح.</p> : room.decision ? (
           <>
-            <p dir="ltr">{room.decision.direction} · {room.decision.status}</p>
+            <p>{label(DIRECTION_AR, room.decision.direction)} <span dir="ltr">{room.decision.direction} · {room.decision.status}</span></p>
             <p>{room.decision.thesis}</p>
             <p dir="ltr">{room.decision.stop ?? "—"} · {room.decision.targets.join(", ") || "—"}</p>
           </>
@@ -235,6 +265,7 @@ export function TradingDesk({ section }: { section: (typeof SECTIONS)[number] })
             <p>{room.execution ? room.execution.state : "لا تنفيذ مسجل"}</p>
             <p>{room.execution?.brokerCalled ? "الوسيط استُدعي." : "لا تأكيد أن الوسيط استُدعي."}</p>
             <p>{room.reconciliation ? room.reconciliation.state : "لا مطابقة في اللقطة"}</p>
+            {room.monitoring.brokerHealth ? <p>صحة الوسيط: {room.monitoring.brokerHealth}</p> : null}
             {room.exit.authorizationRequired ? <p>الخروج مقترح ويحتاج تفويضًا. لم يُرسل أمر إغلاق.</p> : null}
             {room.exit.execution ? <p dir="ltr">exit {room.exit.execution.state}</p> : null}
           </>
@@ -260,11 +291,31 @@ export function TradingDesk({ section }: { section: (typeof SECTIONS)[number] })
       </section>
       <section aria-label="Memory" className="mb-4">
         <h2 className="text-sm text-ink-secondary">الذاكرة</h2>
-        <p>المراجعة: دليل زمني فقط، ولا يوجد متن مراجعة.</p>
         {room && room.memory.length === 0 ? <p>لا ذاكرة تداول لهذه الجولة.</p> : null}
         <ul>
           {room?.memory.map((item) => <li key={item.recordId}>{item.kind}: {item.body}</li>)}
         </ul>
+        {room?.learning?.revisionId ? <p dir="ltr">learning {room.learning.target} · {room.learning.revisionId}</p> : <p>لا تعلم مخزن.</p>}
+      </section>
+      <section aria-label="Review" className="mb-4">
+        <h2 className="text-sm text-ink-secondary">المراجعة</h2>
+        {room === null || room.review === "NOT_AVAILABLE" ? <p>المراجعة غير متاحة.</p> : (
+          <>
+            <h3 className="text-sm">الوقائع</h3>
+            <p>{label(DIRECTION_AR, room.review.facts.decision.direction)} <span dir="ltr">{room.review.facts.decision.direction}</span></p>
+            <p>{room.review.facts.decision.thesis}</p>
+            <p dir="ltr">{room.review.facts.execution?.state ?? "no execution"} · {room.review.facts.reconciliation?.state ?? "no reconciliation"} · {room.review.facts.position?.state ?? "no position"}</p>
+            {room.review.facts.deviations.length > 0 ? <p dir="ltr">{room.review.facts.deviations.join(", ")}</p> : <p>لا انحراف مخزن.</p>}
+            <h3 className="text-sm">التفسيرات</h3>
+            {room.review.interpretations.length === 0 ? <p>لا تفسير مخزن.</p> : (
+              <ul>{room.review.interpretations.map((item) => <li key={item.recordId}>{item.body}</li>)}</ul>
+            )}
+            <h3 className="text-sm">التعلم</h3>
+            {room.review.learnings.length === 0 ? <p>لا تعلم مرتبط بهذه المراجعة.</p> : (
+              <ul>{room.review.learnings.map((item) => <li key={item.revisionId} dir="ltr">{item.target}</li>)}</ul>
+            )}
+          </>
+        )}
       </section>
       <section aria-label="Conversation" className="mb-4">
         <h2 className="text-sm text-ink-secondary">المحادثة</h2>

@@ -155,9 +155,22 @@ function inputFromStore(
       : null,
     monitoring: monitoring.record,
     memory,
-    learning: null,
+    learning: latestLearning(store),
+    review: occurrence === null ? null : reviewFrom(store, occurrence.occurrenceId),
     requestedThreadId,
   };
+}
+
+function latestLearning(store: TradingStore): TradingRoomInput["learning"] {
+  const rows = store.memory.listLearning();
+  const latest = rows[rows.length - 1];
+  if (latest === undefined) return null;
+  return { accepted: true, reason: null, revisionId: latest.revisionId, target: latest.target };
+}
+
+function reviewFrom(store: TradingStore, occurrenceId: string): TradingRoomInput["review"] {
+  const review = store.reviews.readLatest(occurrenceId);
+  return review === "missing" || review === "malformed" ? null : review;
 }
 
 function currentOccurrence(store: TradingStore, events: readonly TradingEvent[]) {
