@@ -1,4 +1,4 @@
-import type { BrokerOrderCommand } from "./command.ts";
+import type { BrokerCommand } from "./command.ts";
 import { METAAPI_PROVIDER_ID } from "./binding.ts";
 
 export interface BrokerSubmitResult {
@@ -15,7 +15,7 @@ export interface XauUsdExecutionProvider {
   readonly providerId: typeof METAAPI_PROVIDER_ID;
   readonly bindingId: string;
   readonly configured: boolean;
-  submit(command: BrokerOrderCommand): Promise<BrokerSubmitResult>;
+  submit(command: BrokerCommand): Promise<BrokerSubmitResult>;
 }
 
 export interface MetaApiTransportRequest {

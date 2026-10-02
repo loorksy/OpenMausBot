@@ -1,5 +1,5 @@
 import { parseMetaApiAccountBinding, type MetaApiAccountBinding } from "./binding.ts";
-import { metaApiTradeBody, type BrokerOrderCommand } from "./command.ts";
+import { metaApiExitBody, metaApiTradeBody, type BrokerCommand } from "./command.ts";
 import type { BrokerSubmitResult, MetaApiTransport, XauUsdExecutionProvider } from "./provider.ts";
 import { translateMetaApiTradeResponse } from "./translate.ts";
 
@@ -28,10 +28,10 @@ async function sendOnce(
   accountId: string,
   configured: boolean,
   transport: MetaApiTransport,
-  command: BrokerOrderCommand,
+  command: BrokerCommand,
 ): Promise<BrokerSubmitResult> {
   if (!configured || binding === null) return credentialsMissing();
-  const body = metaApiTradeBody(command);
+  const body = command.actionType === "POSITION_CLOSE_ID" ? metaApiExitBody(command) : metaApiTradeBody(command);
   if (body === null) {
     return { kind: "rejected", brokerRequestId: null, brokerCode: "ORDER_NOT_REPRESENTABLE", fillPrice: null, fillVolume: null, brokerFillId: null };
   }

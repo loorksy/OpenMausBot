@@ -219,7 +219,13 @@ export function runMonitoringCycle(input: MonitoringCycleInput): MonitoringCycle
   const policy = evaluated.policy;
   if (proposal.risk.state !== "ACCEPT") blocks.add("RISK_BLOCKED");
   if (policy.state !== "ALLOW") blocks.add("POLICY_BLOCKED");
-  if (input.decision === "EXIT") blocks.add("EXIT_CLOSE_NOT_REPRESENTABLE");
+  if (input.decision === "EXIT") {
+    const quantityMatches = exitProposal?.proposedExitQuantity != null
+      && positions.position?.quantity != null
+      && exitProposal.proposedExitQuantity === positions.position.quantity;
+    const representable = exitProposal?.positionId != null && quantityMatches && !positions.ambiguous;
+    blocks.add(representable ? "EXIT_AUTHORIZATION_REQUIRED" : "EXIT_CLOSE_NOT_REPRESENTABLE");
+  }
   const failureCodes = [...blocks].sort();
   const semantics = semanticsFor(input, market, positions, reconciliationState, proposal.risk.state !== "ACCEPT", failureCodes);
   const events = eventsFor(input, occurrence, market, health, positions, kill, failureCodes, semantics);

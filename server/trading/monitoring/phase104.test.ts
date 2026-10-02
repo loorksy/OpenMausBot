@@ -370,7 +370,8 @@ describe("phase 10.4 native monitoring", () => {
       executable: false,
       brokerSubmit: false,
     });
-    expect(result.failureCodes).toContain("EXIT_CLOSE_NOT_REPRESENTABLE");
+    expect(result.failureCodes).toContain("EXIT_AUTHORIZATION_REQUIRED");
+    expect(result.failureCodes).not.toContain("EXIT_CLOSE_NOT_REPRESENTABLE");
     expect(result.brokerCalled).toBe(false);
     expect(result.executionSubmitted).toBe(false);
     expect(result.semantics).toContain("EXIT_REQUIRED");

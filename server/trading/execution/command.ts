@@ -42,6 +42,41 @@ export function pendingAction(
   return null;
 }
 
+/** MetaApi trade action that closes one position by the broker's position id.
+ * It uses the same trade body the pending-entry command already sends.
+ * It is not a model tool. */
+export const EXIT_ACTION_TYPE = "POSITION_CLOSE_ID" as const;
+
+export interface BrokerExitCommand {
+  readonly instrument: "XAUUSD";
+  readonly symbol: "XAUUSD";
+  readonly direction: "LONG" | "SHORT";
+  readonly actionType: typeof EXIT_ACTION_TYPE;
+  readonly positionId: string;
+  readonly volume: number;
+  readonly clientId: string;
+  readonly executionRequestId: string;
+}
+
+export type BrokerCommand = BrokerOrderCommand | BrokerExitCommand;
+
+const POSITION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+export function metaApiExitBody(command: BrokerExitCommand): Record<string, string | number> | null {
+  if (command.actionType !== EXIT_ACTION_TYPE) return null;
+  if (command.symbol !== "XAUUSD" || command.instrument !== "XAUUSD") return null;
+  if (!POSITION_ID.test(command.positionId)) return null;
+  if (!/^[a-f0-9]{26}$/.test(command.clientId)) return null;
+  if (!Number.isFinite(command.volume) || command.volume <= 0) return null;
+  return {
+    actionType: command.actionType,
+    positionId: command.positionId,
+    symbol: command.symbol,
+    volume: command.volume,
+    clientId: command.clientId,
+  };
+}
+
 export function metaApiTradeBody(command: BrokerOrderCommand): Record<string, string | number> | null {
   if (!(PENDING_ACTION_TYPES as readonly string[]).includes(command.actionType)) return null;
   if (command.symbol !== "XAUUSD" || command.instrument !== "XAUUSD") return null;

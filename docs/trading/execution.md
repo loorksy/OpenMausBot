@@ -87,8 +87,10 @@ does not match the risk snapshot, the attempt is `NOT_SUBMITTED` /
 
 Volume, stop loss, and a single take profit are copied. More than one
 target cannot be represented as one MT5 take profit, so that proposal is
-rejected. `MANAGE_EXISTING_POSITION` and `EXIT_EXISTING_POSITION` are
-rejected rather than mapped to a close. MetaApi `clientId` is 26 hex
+rejected. `MANAGE_EXISTING_POSITION` is still rejected. `EXIT_EXISTING_POSITION`
+is sent only when the caller also names one broker position id. The body
+uses MetaApi `POSITION_CLOSE_ID` on the same trade request. The volume is
+the authorized quantity. A different volume is not submitted. MetaApi `clientId` is 26 hex
 characters because MetaApi limits `comment` plus `clientId` to 26. The
 full execution identity stays on the attempt record.
 

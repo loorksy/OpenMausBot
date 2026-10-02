@@ -19,7 +19,7 @@ import { contentHash } from "../replay/hash.ts";
 import type { PolicyDecision } from "../policy/result.ts";
 import type { RiskDecision } from "../risk/result.ts";
 import { parseMetaApiAccountBinding, type MetaApiAccountBinding } from "./binding.ts";
-import { pendingAction, type BrokerOrderCommand } from "./command.ts";
+import { pendingAction, type BrokerCommand, type BrokerExitCommand } from "./command.ts";
 import { executionAttemptKey } from "./identity.ts";
 import type { ExecutionAttemptRecord, ExecutionLedger } from "./ledger.ts";
 import type { XauUsdExecutionProvider } from "./provider.ts";
@@ -54,6 +54,14 @@ export interface ExecutionSubmitInput {
   readonly requestedQuantity: number | null;
   readonly provider: XauUsdExecutionProvider;
   readonly ledger: ExecutionLedger;
+  /** Broker position to close. Absent for a pending entry. */
+  readonly exitPosition?: {
+    readonly positionId: string;
+    readonly direction: "LONG" | "SHORT";
+    readonly quantity: number;
+  } | null;
+  /** Pause blocks a new submission. It does not erase the ledger. */
+  readonly paused?: boolean;
   readonly submittedAt: string;
   readonly agentRunId: string;
   readonly evaluationRunId?: string | null;
@@ -76,7 +84,7 @@ interface Ready {
   readonly gateState: string;
   readonly identity: string;
   readonly requestId: string;
-  readonly command: BrokerOrderCommand;
+  readonly command: BrokerCommand;
 }
 
 /** Submits one authorized proposal. Anything other than ELIGIBLE_FOR_EXECUTION
@@ -115,6 +123,9 @@ async function decide(input: ExecutionSubmitInput): Promise<ExecutionDecision> {
   }
   if (input.gate.environment === "SIMULATOR") {
     return finish(input, located(input), "NOT_SUBMITTED", "ENVIRONMENT_NOT_EXECUTABLE", false, null, null, null);
+  }
+  if (input.paused === true) {
+    return finish(input, located(input), "NOT_SUBMITTED", "PAUSED", false, null, null, null);
   }
   const ready = authorize(input);
   if (ready.ok === false) {
@@ -277,6 +288,9 @@ function authorize(input: ExecutionSubmitInput): { ok: true; ready: Ready } | { 
   }
   const kill = readSwitch(input.killSwitch, environment.data, input.agentRunId);
   if (kill !== "open") return { ok: false, reason: kill };
+  if (input.decision?.direction === "EXIT_EXISTING_POSITION") {
+    return authorizeExit(input, environment.data, provenance.data, binding);
+  }
   const proposal = matchProposal(input, environment.data, provenance.data);
   if (proposal.ok === false) return proposal;
   const quote = input.quote;
@@ -320,10 +334,64 @@ function authorize(input: ExecutionSubmitInput): { ok: true; ready: Ready } | { 
   };
 }
 
+const POSITION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+function authorizeExit(
+  input: ExecutionSubmitInput,
+  environment: TradingEnvironment,
+  provenance: ProvenanceStatus,
+  binding: MetaApiAccountBinding,
+): { ok: true; ready: Ready } | { ok: false; reason: ExecutionReason } {
+  const proposal = matchProposal(input, environment, provenance, true);
+  if (proposal.ok === false) return proposal;
+  const position = input.exitPosition;
+  if (position == null || !POSITION_ID.test(position.positionId) || position.direction !== proposal.direction) {
+    return { ok: false, reason: "POSITION_IDENTITY_AMBIGUOUS" };
+  }
+  if (position.quantity !== proposal.quantity) return { ok: false, reason: "SILENT_REPAIR_REJECTED" };
+  const quote = input.quote;
+  if (quote === null || quote.snapshotId !== input.risk.snapshotId) return { ok: false, reason: "ORDER_NOT_REPRESENTABLE" };
+  if (!input.provider.configured) return { ok: false, reason: "CREDENTIALS_MISSING" };
+  const identity = executionIdentity(input, proposal, binding.bindingId, environment, provenance, position.positionId);
+  const requestId = `exr.${contentHash({ schema: EXECUTION_ENGINE_VERSION, identity, role: "primary" }).slice(0, 40)}`;
+  const clientId = contentHash({ schema: EXECUTION_ENGINE_VERSION, identity, role: "client" }).slice(0, 26);
+  const command: BrokerExitCommand = {
+    instrument: "XAUUSD",
+    symbol: "XAUUSD",
+    direction: proposal.direction,
+    actionType: "POSITION_CLOSE_ID",
+    positionId: position.positionId,
+    volume: proposal.quantity,
+    clientId,
+    executionRequestId: requestId,
+  };
+  return {
+    ok: true,
+    ready: {
+      environment,
+      provenance,
+      binding,
+      direction: proposal.direction,
+      entry: proposal.entry,
+      stop: proposal.stop,
+      takeProfit: proposal.takeProfit,
+      quantity: proposal.quantity,
+      requestedQuantity: input.requestedQuantity,
+      targets: proposal.targets,
+      proposalBinding: proposal.proposalBinding,
+      gateState: input.gate.state,
+      identity,
+      requestId,
+      command,
+    },
+  };
+}
+
 function matchProposal(
   input: ExecutionSubmitInput,
   environment: TradingEnvironment,
   provenance: ProvenanceStatus,
+  exit = false,
 ): {
   ok: true;
   direction: "LONG" | "SHORT";
@@ -345,8 +413,17 @@ function matchProposal(
   if (decision.instrument !== XAUUSD_INSTRUMENT || intent.instrument !== XAUUSD_INSTRUMENT) {
     return { ok: false, reason: "INVALID_INSTRUMENT" };
   }
-  if (decision.direction !== "LONG" && decision.direction !== "SHORT") return { ok: false, reason: "ORDER_NOT_REPRESENTABLE" };
-  if (intent.direction !== decision.direction) return { ok: false, reason: "PROPOSAL_MISMATCH" };
+  const closing = exit || decision.direction === "EXIT_EXISTING_POSITION";
+  if (closing) {
+    if (decision.direction !== "EXIT_EXISTING_POSITION" || intent.direction !== "EXIT_EXISTING_POSITION") {
+      return { ok: false, reason: "PROPOSAL_MISMATCH" };
+    }
+    if (input.exitPosition == null) return { ok: false, reason: "ORDER_NOT_REPRESENTABLE" };
+  } else if (decision.direction !== "LONG" && decision.direction !== "SHORT") {
+    return { ok: false, reason: "ORDER_NOT_REPRESENTABLE" };
+  } else if (intent.direction !== decision.direction) {
+    return { ok: false, reason: "PROPOSAL_MISMATCH" };
+  }
   if (intent.entry === undefined || intent.stop === undefined) return { ok: false, reason: "ORDER_NOT_REPRESENTABLE" };
   if (intent.targets.length > 1 || decision.targets.length !== intent.targets.length) {
     return { ok: false, reason: "ORDER_NOT_REPRESENTABLE" };
@@ -404,9 +481,11 @@ function matchProposal(
     policyConfigId: policy.configId,
   });
   if (binding !== gate.binding) return { ok: false, reason: "PROPOSAL_MISMATCH" };
+  const side = closing ? input.exitPosition?.direction : decision.direction;
+  if (side !== "LONG" && side !== "SHORT") return { ok: false, reason: "POSITION_IDENTITY_AMBIGUOUS" };
   return {
     ok: true,
-    direction: decision.direction,
+    direction: side,
     entry: intent.entry,
     stop: intent.stop,
     takeProfit: intent.targets.length === 1 ? intent.targets[0] ?? null : null,
@@ -431,6 +510,7 @@ function executionIdentity(
   bindingId: string,
   environment: TradingEnvironment,
   provenance: ProvenanceStatus,
+  positionId?: string,
 ): string {
   return `exn.${contentHash({
     schema: EXECUTION_ENGINE_VERSION,
@@ -450,6 +530,7 @@ function executionIdentity(
     takeProfit: proposal.takeProfit,
     quantity: proposal.quantity,
     requestedQuantity: input.requestedQuantity,
+    ...(positionId === undefined ? {} : { positionId, action: "POSITION_CLOSE_ID" }),
   }).slice(0, 40)}`;
 }
 
