@@ -12,12 +12,19 @@ type TradingHealth = {
   healthy: boolean;
 };
 
+type DeskChart = {
+  provenance: string;
+  timeframe: string | null;
+  candles: readonly CanonicalCandle[];
+};
+
 type DeskView = {
   presence: string;
   at: string | null;
   eventType: string | null;
   positionState: string | null;
   source: string;
+  chart?: DeskChart;
 };
 
 const SECTIONS = ["desk", "trading", "research", "automation", "lab", "settings"] as const;
@@ -55,7 +62,8 @@ export function TradingDesk({ section }: { section: (typeof SECTIONS)[number] })
       });
     return () => controller.abort();
   }, []);
-  const provenance = health?.marketData === "live" ? "LIVE" : "UNAVAILABLE";
+  const provenance = desk?.chart?.provenance ?? "UNAVAILABLE";
+  const candles = desk?.chart?.candles ?? EMPTY_CANDLES;
   const events = useMemo(
     () => (desk?.eventType && desk.at ? [{ type: desk.eventType, at: desk.at }] : EMPTY_EVENTS),
     [desk?.eventType, desk?.at],
@@ -76,7 +84,7 @@ export function TradingDesk({ section }: { section: (typeof SECTIONS)[number] })
         <XauUsdChart
           symbol="XAUUSD"
           provenance={provenance}
-          candles={EMPTY_CANDLES}
+          candles={candles}
           positionState={desk?.positionState}
           events={events}
         />

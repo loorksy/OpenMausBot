@@ -54,10 +54,12 @@ approval engine and fire-time gate are `docs/trading/approval.md` and
 `docs/trading/execution-gate.md`. `evaluateFireTimeGate` can return
 `ELIGIBLE_FOR_EXECUTION`. That state is authorization only. The MetaApi
 Cloud execution boundary is `docs/trading/execution.md`. It submits only
-that authorization, and only through an injected transport. No external
-feed is configured. OANDA, a local MetaTrader 5 terminal, simulator fills,
-kill-switch enforcement, P&L, strategy scoring, and production configuration
-are not implemented. The desk chart is KLineChart Pro. It draws the canonical
+that authorization, and only through an injected transport. The optional
+XAUUSD market feed is the OANDA v20 REST provider in
+`docs/trading/market-data.md`. It is installed only when its configuration
+is complete, and it does not place orders. A local MetaTrader 5 terminal,
+simulator fills, kill-switch enforcement, P&L, strategy scoring, and
+production configuration are not implemented. The desk chart is KLineChart Pro. It draws the canonical
 XAUUSD market contract and is not a market-data provider. Reconciliation against a
 captured broker snapshot is `docs/trading/reconciliation.md`.
 

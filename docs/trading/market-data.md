@@ -3,8 +3,9 @@
 Phase 2 is the market-data boundary for the literal instrument `XAUUSD`.
 It does not place orders, size risk, evaluate policy, or draw a desk.
 
-The OpenMausBot harness is still the only agent runtime. This module is not
-mounted on the HTTP server and does not open the trading store.
+The OpenMausBot harness is still the only agent runtime. This module does
+not open the trading store and does not schedule reads. An authenticated
+desk request may read the installed provider once.
 
 ## Boundary
 
@@ -16,9 +17,33 @@ any snapshot is sealed. `createXauUsdMarketSnapshot` copies the validated
 quote and bars into a Phase 1 `MarketSnapshot` and freezes it.
 `buildXauUsdMarketContext` points at that snapshot. It does not add analysis.
 
-The only implementation in this phase is `createDeterministicXauUsdProvider`,
-an in-memory fixture. No external market-data vendor is configured. OANDA,
-MetaApi, and MT5 are not used.
+`createDeterministicXauUsdProvider` is an in-memory fixture for tests. It is
+not installed as a live feed.
+
+The production feed is `createOandaXauUsdMarketDataProvider`. It implements
+the same interface and calls the official OANDA v20 REST API:
+
+- `GET /v3/accounts/{accountID}/pricing`
+- `GET /v3/accounts/{accountID}/instruments/XAU_USD/candles`
+
+It is installed only by `installConfiguredOandaProvider` when
+`OMB_OANDA_API_TOKEN`, `OMB_OANDA_ACCOUNT_ID`, and `OMB_OANDA_ENVIRONMENT`
+are all present and valid. `OMB_OANDA_ENVIRONMENT` is `practice` or `live`.
+Practice maps to the PAPER trading slot and `https://api-fxpractice.oanda.com`.
+Live maps to the LIVE trading slot and `https://api-fxtrade.oanda.com`.
+The host is not an environment variable. There is no demo alias and no
+fallback from one environment to the other. A partial configuration leaves
+the provider slot empty. The token stays inside the provider. It is removed
+from `process.env` after a successful or attempted install so later process
+snapshots do not inherit it.
+
+The canonical symbol is `XAUUSD`. The only OANDA instrument requested is
+`XAU_USD`. Any other instrument is unavailable. Quotes use top-of-book bid
+and ask and require OANDA status `tradeable`. Candles request `price=M` and
+read only the midpoint object. `D1` is OANDA granularity `D`. Incomplete
+candles (`complete` not `true`) are excluded. A missing `complete` flag
+rejects the payload. The adapter does not place orders and does not read
+MetaApi.
 
 ## Timeframes
 
@@ -72,9 +97,9 @@ only after that operation runs.
 
 ## What this phase does not implement
 
-Broker adapters, execution, simulator fills, paper trading, live trading,
-risk, policy, order intents, backtesting, a production trading database, a
-desk, and any real market-data vendor. Historical replay of local XAUUSD
+Broker adapters, execution, simulator fills, paper trading, live order
+routing, risk, policy, order intents, backtesting, and a production trading
+database. Historical replay of local XAUUSD
 fixtures is `docs/trading/replay.md`. A Phase 2 read still rejects a candle
 series that contains a future bar. Replay does not trim that series after
 the fact; the replay provider omits a bar until its close time.

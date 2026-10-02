@@ -427,7 +427,9 @@ import * as vps from "./vps-computer.ts";
 import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
 import { settleNativeTradingApprovalFromEnvironment, tradingResponderId } from "./trading/approval/native.ts";
 import { readInstalledXauUsdMarketDataProvider, startNativeRoutineTurn } from "./trading/occurrence/runtime.ts";
+import { readDeskChartCandles } from "./trading/desk/market.ts";
 import { tradingDeskReport } from "./trading/desk/project.ts";
+import { installConfiguredOandaProvider, OANDA_API_TOKEN_ENV } from "./trading/infrastructure/market_data/oanda.ts";
 import { queryTokenRejected, tradingHealthReport } from "./trading/production/health.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
 import { BUILT_IN_BROWSER_SYSTEM_PROMPT } from "./browser-engine.ts";
@@ -587,6 +589,11 @@ import { createDesktopViewer, desktopViewerUrl } from "./routes/desktop-viewer.t
 import { localDesktopTarget, localVmViewerStatus, viewerTargetId } from "./desktop-viewer-targets.ts";
 import { createAntigravityLeftoverRoutes } from "./routes/antigravity-leftovers.ts";
 import { findAntigravityLeftovers, removeAntigravityLeftovers } from "./drivers/antigravity-temp.ts";
+
+// Copy a complete OANDA configuration into the market-data provider, then
+// drop the token before any `{ ...process.env }` snapshot can inherit it.
+installConfiguredOandaProvider(process.env);
+delete process.env[OANDA_API_TOKEN_ENV];
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const WEBHOOK_PORT = Number(process.env.OMB_WEBHOOK_PORT || PORT + 1);
@@ -14866,7 +14873,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     if (!gate.auth) return json(res, gate.status, { error: gate.error });
     if (method === "GET" && path === "/api/trading/desk") {
       if (queryTokenRejected(url.search)) return json(res, 401, { error: "query credentials are not accepted" });
-      return json(res, 200, tradingDeskReport(process.env));
+      const chart = await readDeskChartCandles({
+        provider: readInstalledXauUsdMarketDataProvider(),
+        now: new Date().toISOString(),
+      });
+      return json(res, 200, { ...tradingDeskReport(process.env), chart });
     }
     const auth = gate.auth;
     if (HOSTED_WORKSPACE && auth.kind === "session") {

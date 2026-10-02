@@ -166,7 +166,7 @@ describe.skipIf(CHROME === undefined)("KLineChart Pro widget", () => {
     expect(foreign.text).not.toContain("2,327.60");
     expect(foreign.texts).toEqual([]);
 
-    expect(requests.some((url) => /metaapi|polygon|tradingview|charting_library/i.test(url))).toBe(false);
+    expect(requests.some((url) => /metaapi|polygon|tradingview|charting_library|oanda|api-fxtrade|api-fxpractice/i.test(url))).toBe(false);
     ws.close();
   }, 60_000);
 });
