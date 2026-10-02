@@ -428,7 +428,8 @@ import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrig
 import { settleNativeTradingApprovalFromEnvironment, tradingResponderId } from "./trading/approval/native.ts";
 import { readInstalledXauUsdMarketDataProvider, startNativeRoutineTurn } from "./trading/occurrence/runtime.ts";
 import { readDeskChartCandles } from "./trading/desk/market.ts";
-import { tradingDeskReport } from "./trading/desk/project.ts";
+import { loadTradingRoom, roomLegacyFields } from "./trading/desk/load.ts";
+import { settleDeskApproval } from "./trading/desk/approval.ts";
 import { installConfiguredOandaProvider, OANDA_API_TOKEN_ENV } from "./trading/infrastructure/market_data/oanda.ts";
 import { queryTokenRejected, tradingHealthReport } from "./trading/production/health.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
@@ -14871,13 +14872,23 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       return json(res, 200, loadBrand());
     }
     if (!gate.auth) return json(res, gate.status, { error: gate.error });
+    if (path === "/api/trading/desk" && queryTokenRejected(url.search)) {
+      return json(res, 401, { error: "query credentials are not accepted" });
+    }
     if (method === "GET" && path === "/api/trading/desk") {
-      if (queryTokenRejected(url.search)) return json(res, 401, { error: "query credentials are not accepted" });
+      const now = new Date().toISOString();
       const chart = await readDeskChartCandles({
         provider: readInstalledXauUsdMarketDataProvider(),
-        now: new Date().toISOString(),
+        now,
       });
-      return json(res, 200, { ...tradingDeskReport(process.env), chart });
+      const room = loadTradingRoom(process.env, chart, now);
+      return json(res, 200, { ...roomLegacyFields(room), room, chart });
+    }
+    if (method === "POST" && path === "/api/trading/desk/approval") {
+      if (queryTokenRejected(url.search)) return json(res, 401, { error: "query credentials are not accepted" });
+      const body = await readBody(req);
+      const result = settleDeskApproval(process.env, gate.auth, body);
+      return json(res, result.status, result.body);
     }
     const auth = gate.auth;
     if (HOSTED_WORKSPACE && auth.kind === "session") {
