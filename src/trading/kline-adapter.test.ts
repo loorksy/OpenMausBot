@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { XAUUSD_TIMEFRAMES } from "../../shared/trading/snapshot.ts";
 import { adaptXauUsdChart, candlesInRequestWindow, toKLineCandle } from "./kline-adapter.ts";
 
 const AT = "2026-08-15T14:30:00.000Z";
@@ -55,8 +56,23 @@ describe("klinechart pro adapter", () => {
     expect(chart.status).toBe("unavailable");
   });
 
+  it("accepts only the canonical timeframes and does not rename another frame", () => {
+    for (const timeframe of XAUUSD_TIMEFRAMES) {
+      const chart = adaptXauUsdChart({ symbol: "XAUUSD", provenance: "LIVE", candles: [candle({ timeframe })] });
+      expect(chart.reason).toBeNull();
+      expect(chart.period?.text).toBe(timeframe);
+      expect(chart.candles).toHaveLength(1);
+    }
+    for (const timeframe of ["W1", "15m", "H2", "M10", "1D"]) {
+      const chart = adaptXauUsdChart({ symbol: "XAUUSD", provenance: "LIVE", candles: [candle({ timeframe })] });
+      expect(chart.reason).toBe("UNSUPPORTED_TIMEFRAME");
+      expect(chart.period).toBeNull();
+      expect(chart.candles).toEqual([]);
+    }
+  });
+
   it("rejects a foreign symbol, a missing series, and an invalid bar", () => {
-    for (const symbol of ["EURUSD", "GBPUSD", "USDJPY", "XAGUSD", "BTCUSD"]) {
+    for (const symbol of ["EURUSD", "GBPUSD", "USDJPY", "XAGUSD", "BTCUSD", "NZDCHF"]) {
       const rejected = adaptXauUsdChart({ symbol, provenance: "LIVE", candles: [candle()] });
       expect(rejected.reason).toBe("INSTRUMENT_REJECTED");
       expect(rejected.candles).toEqual([]);
@@ -96,6 +112,25 @@ describe("klinechart pro adapter", () => {
     expect(open.markers.map((marker) => marker.kind)).toEqual(["decision", "position"]);
     expect(JSON.stringify(open)).not.toContain("metaapi");
     expect(JSON.stringify(open)).not.toContain("token");
+    expect(JSON.stringify(open)).not.toContain("apiKey");
+    expect(JSON.stringify(open)).not.toContain("secret");
+  });
+
+  it("draws fill and approval marks from those events and does not invent an exit or a fill from reconciliation", () => {
+    const chart = adaptXauUsdChart({
+      symbol: "XAUUSD",
+      provenance: "LIVE",
+      candles: [candle()],
+      positionState: "POSITION_CLOSED",
+      events: [
+        { type: "approval.approved", at: AT },
+        { type: "execution.filled", at: AT },
+        { type: "position.closed", at: AT },
+        { type: "reconciliation.completed", at: AT },
+      ],
+    });
+    expect(chart.markers.map((marker) => marker.kind)).toEqual(["approval", "fill"]);
+    expect(chart.markers.some((marker) => marker.kind === "exit" || marker.kind === "position")).toBe(false);
   });
 
   it("keeps a real decision marker when candles are missing and does not invent a position", () => {

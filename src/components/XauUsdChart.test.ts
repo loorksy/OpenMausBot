@@ -35,4 +35,33 @@ describe("XAUUSD chart view", () => {
     expect(html).not.toContain("class=\"xauusd-kline\"");
     expect(html).not.toContain("1.15");
   });
+
+  it("shows STALE on a drawable series and keeps simulator candles off the mount", () => {
+    const bar = {
+      timeframe: "H1",
+      time: "2026-08-15T14:00:00.000Z",
+      open: 2320.5,
+      high: 2331,
+      low: 2316.4,
+      close: 2327.6,
+      volume: 1964,
+    };
+    const stale = renderToStaticMarkup(createElement(XauUsdChart, {
+      symbol: "XAUUSD",
+      provenance: "STALE",
+      candles: [bar],
+    }));
+    expect(stale).toContain("STALE · XAUUSD · stale");
+    expect(stale).toContain("class=\"xauusd-kline");
+    expect(stale).not.toContain("LIVE · XAUUSD · ready");
+
+    const simulator = renderToStaticMarkup(createElement(XauUsdChart, {
+      symbol: "XAUUSD",
+      provenance: "SIMULATOR",
+      candles: [bar],
+    }));
+    expect(simulator).toContain("SIMULATOR · Waiting for live XAUUSD market data");
+    expect(simulator).not.toContain("class=\"xauusd-kline");
+    expect(simulator).not.toContain("2327.6");
+  });
 });
