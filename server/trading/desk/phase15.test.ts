@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseTradingEvent } from "../../../shared/trading/events.ts";
 import { tradingHealthReport, queryTokenRejected } from "../production/health.ts";
-import { projectDesk, toTradingViewQuote, tradingDeskReport, tradingViewChartStatus } from "./project.ts";
+import { projectDesk, tradingDeskReport } from "./project.ts";
 
 const AT = "2026-08-15T14:30:00.000Z";
 
@@ -71,29 +71,10 @@ describe("phase 15 desk, health, and chart", () => {
     expect(JSON.stringify(health)).not.toContain("token");
   });
 
-  it("adapts a live XAUUSD quote for TradingView and does not substitute another engine", () => {
-    expect(tradingViewChartStatus(false)).toEqual({ engine: "unavailable", fallback: false });
-    expect(tradingViewChartStatus(true)).toEqual({ engine: "tradingview", fallback: false });
-    expect(toTradingViewQuote({
-      symbol: "XAUUSD",
-      bid: 2300,
-      ask: 2301,
-      timestamp: AT,
-      provenance: "LIVE",
-    })).toEqual({ ok: true, symbol: "XAUUSD", bid: 2300, ask: 2301, time: AT });
-    expect(toTradingViewQuote({
-      symbol: "EURUSD",
-      bid: 1,
-      ask: 1.1,
-      timestamp: AT,
-      provenance: "LIVE",
-    }).ok).toBe(false);
-    expect(toTradingViewQuote({
-      symbol: "XAUUSD",
-      bid: 2300,
-      ask: 2301,
-      timestamp: AT,
-      provenance: "SIMULATOR",
-    })).toEqual({ ok: false, reason: "UNAVAILABLE" });
+  it("keeps a chart section and does not require another chart engine", () => {
+    const desk = projectDesk({ events: [] });
+    expect(desk.sections).toContain("chart");
+    expect(JSON.stringify(desk)).not.toContain("tradingview");
+    expect(JSON.stringify(desk)).not.toContain("charting_library");
   });
 });

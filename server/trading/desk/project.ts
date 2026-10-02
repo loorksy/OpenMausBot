@@ -104,10 +104,10 @@ export function projectDesk(input: {
   };
 }
 
-/** TradingView is the only chart engine. A missing library is unavailable.
- * There is no second engine. */
 /** Reads the configured trading store. An unconfigured store stays idle.
- * It does not invent events. */
+ * It does not invent events. The desk chart is drawn by KLineChart Pro in
+ * the client from the canonical market contract. This report is not a
+ * market provider and it does not name a second chart engine. */
 export function tradingDeskReport(env: Readonly<Record<string, string | undefined>>): DeskProjection & {
   readonly source: "unconfigured" | "store";
 } {
@@ -124,27 +124,4 @@ export function tradingDeskReport(env: Readonly<Record<string, string | undefine
   } finally {
     store.close();
   }
-}
-
-export function tradingViewChartStatus(libraryPresent: boolean): {
-  readonly engine: "tradingview" | "unavailable";
-  readonly fallback: false;
-} {
-  return libraryPresent
-    ? { engine: "tradingview", fallback: false }
-    : { engine: "unavailable", fallback: false };
-}
-
-export function toTradingViewQuote(input: {
-  readonly symbol: string;
-  readonly bid: number | null;
-  readonly ask: number | null;
-  readonly timestamp: string | null;
-  readonly provenance: string;
-}): { readonly ok: true; readonly symbol: "XAUUSD"; readonly bid: number; readonly ask: number; readonly time: string } | { readonly ok: false; readonly reason: "UNAVAILABLE" | "INSTRUMENT_REJECTED" } {
-  if (input.symbol !== "XAUUSD") return { ok: false, reason: "INSTRUMENT_REJECTED" };
-  if (input.provenance !== "LIVE" || input.bid === null || input.ask === null || input.timestamp === null) {
-    return { ok: false, reason: "UNAVAILABLE" };
-  }
-  return { ok: true, symbol: "XAUUSD", bid: input.bid, ask: input.ask, time: input.timestamp };
 }

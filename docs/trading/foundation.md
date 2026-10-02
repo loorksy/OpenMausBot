@@ -56,8 +56,9 @@ approval engine and fire-time gate are `docs/trading/approval.md` and
 Cloud execution boundary is `docs/trading/execution.md`. It submits only
 that authorization, and only through an injected transport. No external
 feed is configured. OANDA, a local MetaTrader 5 terminal, simulator fills,
-kill-switch enforcement, P&L, strategy scoring, the desk, TradingView, and
-production configuration are not implemented. Reconciliation against a
+kill-switch enforcement, P&L, strategy scoring, and production configuration
+are not implemented. The desk chart is KLineChart Pro. It draws the canonical
+XAUUSD market contract and is not a market-data provider. Reconciliation against a
 captured broker snapshot is `docs/trading/reconciliation.md`.
 
 `foundationControl` in `server/trading/control/boundaries.ts` still throws

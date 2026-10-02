@@ -1,4 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+import { XauUsdChart } from "./XauUsdChart.tsx";
+import type { CanonicalCandle } from "../trading/kline-adapter.ts";
 
 type TradingHealth = {
   application: string;
@@ -18,9 +21,11 @@ type DeskView = {
 };
 
 const SECTIONS = ["desk", "trading", "research", "automation", "lab", "settings"] as const;
+const EMPTY_CANDLES: readonly CanonicalCandle[] = [];
+const EMPTY_EVENTS: readonly { readonly type: string; readonly at: string }[] = [];
 
 /** Production desk shell. Presence stays idle until a real event arrives.
- * The chart slot names TradingView and does not start another engine. */
+ * The chart is KLineChart Pro and only draws a canonical XAUUSD series. */
 export function TradingDesk({ section }: { section: (typeof SECTIONS)[number] }) {
   const [health, setHealth] = useState<TradingHealth | null>(null);
   const [desk, setDesk] = useState<DeskView | null>(null);
@@ -50,28 +55,38 @@ export function TradingDesk({ section }: { section: (typeof SECTIONS)[number] })
       });
     return () => controller.abort();
   }, []);
+  const provenance = health?.marketData === "live" ? "LIVE" : "UNAVAILABLE";
+  const events = useMemo(
+    () => (desk?.eventType && desk.at ? [{ type: desk.eventType, at: desk.at }] : EMPTY_EVENTS),
+    [desk?.eventType, desk?.at],
+  );
   return (
-    <main className="trading-desk" data-section={section}>
-      <header>
-        <h1>XAUUSD desk</h1>
-        <p>{section}</p>
+    <main className="trading-desk min-h-dvh bg-app px-4 py-6 text-ink" dir="auto" data-section={section}>
+      <header className="mb-6">
+        <h1 className="text-xl">XAUUSD desk</h1>
+        <p className="text-ink-secondary">{section}</p>
       </header>
-      <section aria-label="Agent presence">
-        <h2>Agent</h2>
+      <section aria-label="Agent presence" className="mb-6">
+        <h2 className="text-sm text-ink-secondary">Agent</h2>
         <p>{desk?.presence ?? "IDLE"}</p>
         <p>{desk?.eventType ? `${desk.eventType} at ${desk.at ?? ""}` : "No trading event has been recorded for this view."}</p>
         <p>{desk?.positionState ? `Position state ${desk.positionState}` : "Broker position is not inferred from this page."}</p>
       </section>
-      <section aria-label="Chart">
-        <h2>XAUUSD</h2>
-        <p>{health?.marketData === "live" ? "Live quote available for TradingView." : "TradingView chart is unavailable until live market truth is present."}</p>
+      <section aria-label="Chart" className="mb-6">
+        <XauUsdChart
+          symbol="XAUUSD"
+          provenance={provenance}
+          candles={EMPTY_CANDLES}
+          positionState={desk?.positionState}
+          events={events}
+        />
       </section>
-      <section aria-label="Position">
-        <h2>Position</h2>
-        <p>Broker position is not inferred from this page.</p>
+      <section aria-label="Position" className="mb-6">
+        <h2 className="text-sm text-ink-secondary">Position</h2>
+        <p>{desk?.positionState ? `Position state ${desk.positionState}` : "Broker position is not inferred from this page."}</p>
       </section>
       <section aria-label="Trading health">
-        <h2>Health</h2>
+        <h2 className="text-sm text-ink-secondary">Health</h2>
         {healthError ? <p>{healthError}</p> : null}
         {health ? (
           <ul>
