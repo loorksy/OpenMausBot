@@ -36,6 +36,13 @@ export interface EligibleExecutionInput extends EligibilityHandoffInput {
     readonly repository: Pick<OccurrenceRepository, "attachEligibilityReferences" | "readByOccurrenceId" | "attachExecutionReceipt">;
     readonly occurrenceId: string;
   } | null;
+  /** Broker position for an EXIT_EXISTING_POSITION handoff. Absent for an entry. */
+  readonly exitPosition?: {
+    readonly positionId: string;
+    readonly direction: "LONG" | "SHORT";
+    readonly quantity: number;
+  } | null;
+  readonly paused?: boolean;
 }
 
 export interface EligibleExecutionResult {
@@ -101,6 +108,8 @@ function executionInput(input: EligibleExecutionInput, eligibility: EligibilityH
     evaluationRunId: input.evaluationRunId,
     runtimeThreadId: input.runtimeThreadId,
     runtimeTurnId: input.runtimeTurnId,
+    exitPosition: input.exitPosition ?? null,
+    paused: input.paused === true,
   };
 }
 

@@ -722,6 +722,81 @@ describe("phase 10.3 step 5 authorized execution", () => {
     expect(broker.calls()).toBe(0);
   });
 
+  it("closes one broker position through the existing exit command", async () => {
+    const bodies: Array<Record<string, string | number>> = [];
+    const saved = store();
+    const request = input({
+      decision: decision("EXIT_EXISTING_POSITION", 4624.5),
+      orderIntent: intent("EXIT_EXISTING_POSITION", 4632.5, 4624.5),
+      account: { ...account(), exposureSide: "long", exposureLots: 0.12 },
+      exitPosition: { positionId: "pos-9", direction: "LONG", quantity: 0.12 },
+      provider: adapter(async (call) => {
+        bodies.push(call.body);
+        return { kind: "response", status: 200, body: { stringCode: "TRADE_RETCODE_DONE", orderId: "ticket-exit" } };
+      }),
+    }, saved);
+    const result = await submitEligibleExecution(request);
+    expect(result.eligibility?.gate?.state).toBe("ELIGIBLE_FOR_EXECUTION");
+    expect(result.brokerCalled).toBe(true);
+    expect(result.execution?.state).toBe("SUBMISSION_ACCEPTED");
+    expect(bodies[0]).toMatchObject({ actionType: "POSITION_CLOSE_ID", positionId: "pos-9", symbol: "XAUUSD", volume: 0.12 });
+    expect(JSON.stringify(result)).not.toContain(TOKEN);
+  });
+
+  it("does not call the broker when the exit position is missing, mismatched, paused, stopped, or stale", async () => {
+    const cases = [
+      { exitPosition: null, provenance: "LIVE", paused: false, engaged: false },
+      { exitPosition: { positionId: "pos-9", direction: "LONG" as const, quantity: 0.05 }, provenance: "LIVE", paused: false, engaged: false },
+      { exitPosition: { positionId: "pos-9", direction: "LONG" as const, quantity: 0.12 }, provenance: "LIVE", paused: true, engaged: false },
+      { exitPosition: { positionId: "pos-9", direction: "LONG" as const, quantity: 0.12 }, provenance: "LIVE", paused: false, engaged: true },
+      { exitPosition: { positionId: "pos-9", direction: "LONG" as const, quantity: 0.12 }, provenance: "STALE", paused: false, engaged: false },
+      { exitPosition: { positionId: "pos-9", direction: "LONG" as const, quantity: 0.12 }, provenance: "UNAVAILABLE", paused: false, engaged: false },
+      { exitPosition: { positionId: "pos-9", direction: "LONG" as const, quantity: 0.12 }, provenance: "SIMULATOR", paused: false, engaged: false },
+      { exitPosition: { positionId: "pos-9", direction: "LONG" as const, quantity: 0.12 }, provenance: "REPLAY", paused: false, engaged: false },
+    ];
+    for (const item of cases) {
+      const broker = countingProvider();
+      const saved = store();
+      const result = await submitEligibleExecution(input({
+        decision: decision("EXIT_EXISTING_POSITION", 4624.5),
+        orderIntent: intent("EXIT_EXISTING_POSITION", 4632.5, 4624.5),
+        account: { ...account(), exposureSide: "long", exposureLots: 0.12 },
+        exitPosition: item.exitPosition,
+        provenance: item.provenance,
+        paused: item.paused,
+        killSwitch: kill(item.engaged),
+        provider: broker.provider,
+        ledger: saved.ledger,
+      }, saved));
+      expect(result.brokerCalled).toBe(false);
+      expect(broker.calls()).toBe(0);
+    }
+  });
+
+  it("does not submit a second close for the same execution identity", async () => {
+    const saved = store();
+    const first = await submitEligibleExecution(input({
+      decision: decision("EXIT_EXISTING_POSITION", 4624.5),
+      orderIntent: intent("EXIT_EXISTING_POSITION", 4632.5, 4624.5),
+      account: { ...account(), exposureSide: "long", exposureLots: 0.12 },
+      exitPosition: { positionId: "pos-9", direction: "LONG", quantity: 0.12 },
+      provider: adapter(async () => ({ kind: "response", status: 200, body: { stringCode: "TRADE_RETCODE_DONE", orderId: "ticket-exit" } })),
+    }, saved));
+    expect(first.brokerCalled).toBe(true);
+    const broker = countingProvider();
+    const second = await submitEligibleExecution(input({
+      decision: decision("EXIT_EXISTING_POSITION", 4624.5),
+      orderIntent: intent("EXIT_EXISTING_POSITION", 4632.5, 4624.5),
+      account: { ...account(), exposureSide: "long", exposureLots: 0.12 },
+      exitPosition: { positionId: "pos-9", direction: "LONG", quantity: 0.12 },
+      provider: broker.provider,
+      ledger: saved.ledger,
+    }, saved, false));
+    expect(second.brokerCalled).toBe(false);
+    expect(second.execution?.reasons).toContain("DUPLICATE_EXECUTION");
+    expect(broker.calls()).toBe(0);
+  });
+
   it("does not execute a normal chat that lacks an authorized occurrence", async () => {
     const broker = countingProvider();
     const saved = store();
