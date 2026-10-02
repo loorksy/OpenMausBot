@@ -268,10 +268,10 @@ describe("trading occurrence store", () => {
     `);
     db.close();
     const upgraded = openTradingStore({ path, environment: "PAPER" });
-    expect(upgraded.schemaVersion).toBe(3);
+    expect(upgraded.schemaVersion).toBe(4);
     upgraded.close();
     const check = new DatabaseSync(path);
-    expect(check.prepare("SELECT version FROM schema_meta WHERE id = 1").get()).toMatchObject({ version: 3 });
+    expect(check.prepare("SELECT version FROM schema_meta WHERE id = 1").get()).toMatchObject({ version: 4 });
     expect(check.prepare("SELECT job_id, payload_json FROM xauusd_jobs").get()).toMatchObject({
       job_id: "job-1",
       payload_json: '{"keep":true}',
@@ -279,6 +279,8 @@ describe("trading occurrence store", () => {
     expect(check.prepare("SELECT wake_id FROM xauusd_job_wakes").get()).toMatchObject({ wake_id: "wake-1" });
     expect(check.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'trading_occurrences'").get())
       .toMatchObject({ name: "trading_occurrences" });
+    expect(check.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'trading_approval_transports'").get())
+      .toMatchObject({ name: "trading_approval_transports" });
     expect(() => check.prepare(`
       INSERT INTO trading_occurrences (
         occurrence_id, routine_id, routine_run_id, thread_id, agent_run_id, instrument, environment,
@@ -293,7 +295,7 @@ describe("trading occurrence store", () => {
     `).run()).toThrow();
     check.close();
     const again = openTradingStore({ path, environment: "PAPER" });
-    expect(again.schemaVersion).toBe(3);
+    expect(again.schemaVersion).toBe(4);
     expect(again.occurrences.readByRoutineRun("run-1")).toBeNull();
     again.close();
     const still = new DatabaseSync(path);

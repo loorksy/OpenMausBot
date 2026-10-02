@@ -58,6 +58,7 @@ export interface ProviderTurnAttach {
 export interface OccurrenceRepository {
   insertRoutineOccurrence(input: RoutineOccurrenceInsert): TradingOccurrence;
   readByRoutineRun(routineRunId: string): TradingOccurrence | null;
+  readByOccurrenceId(occurrenceId: string): TradingOccurrence | null;
   attachProviderTurn(input: ProviderTurnAttach): TradingOccurrence;
 }
 
@@ -150,6 +151,19 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
         FROM trading_occurrences
         WHERE routine_run_id = ?
       `).get(routineRunId) as OccurrenceRow | undefined;
+      return stored === undefined ? null : seal(fromRow(stored));
+    },
+    readByOccurrenceId(occurrenceId) {
+      if (!recordIdSchema.safeParse(occurrenceId).success) return null;
+      const stored = db.prepare(`
+        SELECT
+          occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
+          instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
+          risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+          proposal_binding_hash, domain_status, failure_code, started_at, completed_at
+        FROM trading_occurrences
+        WHERE occurrence_id = ?
+      `).get(occurrenceId) as OccurrenceRow | undefined;
       return stored === undefined ? null : seal(fromRow(stored));
     },
     attachProviderTurn(input) {

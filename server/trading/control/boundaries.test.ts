@@ -28,7 +28,7 @@ describe("foundation control plane", () => {
 
 describe("trading store foundation", () => {
   it("does not open a database without an explicit path and keeps partitions apart", () => {
-    expect(TRADING_STORE_SCHEMA_VERSION).toBe(3);
+    expect(TRADING_STORE_SCHEMA_VERSION).toBe(4);
     expect(tradingPartitionKey("SIMULATOR")).toBe("xauusd/SIMULATOR");
     expect(tradingPartitionKey("PAPER")).toBe("xauusd/PAPER");
     expect(tradingPartitionKey("LIVE")).toBe("xauusd/LIVE");

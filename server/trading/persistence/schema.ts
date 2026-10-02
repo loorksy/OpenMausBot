@@ -184,4 +184,29 @@ CREATE TABLE IF NOT EXISTS trading_occurrences (
   completed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS trading_occurrences_routine ON trading_occurrences(routine_id);
+CREATE TABLE IF NOT EXISTS trading_approval_transports (
+  request_id TEXT PRIMARY KEY,
+  occurrence_id TEXT NOT NULL,
+  agent_run_id TEXT NOT NULL,
+  decision_id TEXT NOT NULL,
+  order_intent_id TEXT NOT NULL,
+  risk_decision_id TEXT NOT NULL,
+  policy_decision_id TEXT NOT NULL,
+  proposal_binding TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  instrument TEXT NOT NULL CHECK (instrument = 'XAUUSD'),
+  approval_policy_version TEXT NOT NULL,
+  requester_id TEXT NOT NULL,
+  opened_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  max_age_ms INTEGER NOT NULL,
+  assessment_json TEXT NOT NULL,
+  resolved_fingerprint TEXT,
+  approval_decision_id TEXT,
+  assessment_state TEXT,
+  assessment_reason TEXT,
+  fact_json TEXT,
+  decision_json TEXT
+);
+CREATE INDEX IF NOT EXISTS trading_approval_transports_binding ON trading_approval_transports(proposal_binding);
 `;

@@ -425,6 +425,7 @@ import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
 import * as vps from "./vps-computer.ts";
 import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
+import { settleNativeTradingApprovalFromEnvironment, tradingResponderId } from "./trading/approval/native.ts";
 import { readInstalledXauUsdMarketDataProvider, startNativeRoutineTurn } from "./trading/occurrence/runtime.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
 import { BUILT_IN_BROWSER_SYSTEM_PROMPT } from "./browser-engine.ts";
@@ -20999,6 +21000,14 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           return json(res, 200, { ok: true, outcome: behavior === "allow" ? "allowed-once" : "rejected" });
         }
         const outcome = await answerRequest(bot.threadId, bot.modelSelection.instanceId, String(body.requestId), behavior, body.message, { id: bot.id, name: bot.name }, body.always === true, body.rememberCommand === true);
+        settleNativeTradingApprovalFromEnvironment(process.env, {
+          requestId: String(body.requestId),
+          behavior,
+          message: typeof body.message === "string" ? body.message : undefined,
+          source: "user",
+          responderId: tradingResponderId(auth),
+          resolvedAt: new Date().toISOString(),
+        });
         return json(res, 200, { ok: true, outcome });
       });
     }
@@ -21127,6 +21136,14 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (!owner && !pending) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
         const requestOwner = owner ? botForThread(owner.id, threadId) : null;
         const outcome = await answerRequest(threadId, requestOwner?.modelSelection.instanceId ?? "", requestId, behavior, body.message, owner ? { id: owner.id, name: owner.name } : undefined, body.always === true, body.rememberCommand === true);
+        settleNativeTradingApprovalFromEnvironment(process.env, {
+          requestId,
+          behavior,
+          message: typeof body.message === "string" ? body.message : undefined,
+          source: "user",
+          responderId: tradingResponderId(auth),
+          resolvedAt: new Date().toISOString(),
+        });
         return json(res, 200, { ok: true, outcome });
       });
     }
