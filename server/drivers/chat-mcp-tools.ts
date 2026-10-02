@@ -9,6 +9,7 @@ import { augmentedPath } from "../env-path.ts";
 import { killCliTree, spawnCli } from "../procs.ts";
 import { chatImage, type ChatImagePart } from "./chat-images.ts";
 import { ChatBoatClient } from "./chat-boat-tools.ts";
+import type { XauUsdToolSession } from "../trading/agent/session.ts";
 
 export interface ChatToolDefinition {
   type: "function";
@@ -23,6 +24,9 @@ export interface ChatToolSession {
   validate(name: string, args: unknown): void;
   execute(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<ChatToolResult>;
   close(): Promise<void>;
+  /** Present when this turn mounted the XAUUSD catalog. Callers record it.
+   * The model still chooses tools through `execute`. */
+  readonly xauusd?: XauUsdToolSession;
 }
 
 type Server = { command: string; args: string[]; env: Record<string, string> };
@@ -252,13 +256,18 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
   }
   if (servers.length > 32) throw new Error("MCP server count exceeds the 32-server limit");
   const clients: Array<ChatMcpClient | ChatBoatClient> = [];
+  let trading: XauUsdToolSession | undefined;
   let closed = false;
   let closing: Promise<void> | undefined;
   const close = (): Promise<void> => {
     if (closing) return closing;
     closed = true;
     signal.removeEventListener("abort", cancel);
-    closing = Promise.allSettled(clients.map((client) => client.close())).then((results) => {
+    const pending = [
+      ...clients.map((client) => client.close()),
+      ...(trading ? [trading.close()] : []),
+    ];
+    closing = Promise.allSettled(pending).then((results) => {
       if (results.some((result) => result.status === "rejected")) throw new ChatToolSessionError("MCP server shutdown could not be confirmed; execution outcome may be uncertain");
     });
     return closing;
@@ -266,9 +275,16 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
   const cancel = () => { void close().catch(() => {}); };
   signal.addEventListener("abort", cancel, { once: true });
   const definitions: ChatToolDefinition[] = [];
-  const registered = new Map<string, { client: ChatMcpClient | ChatBoatClient; name: string; schema: ValidateFunction }>();
+  type Registration =
+    | { kind: "mcp"; client: ChatMcpClient | ChatBoatClient; name: string; schema: ValidateFunction }
+    | { kind: "xauusd"; name: string };
+  const registered = new Map<string, Registration>();
   try {
     if (signal.aborted) throw aborted();
+    if (integrations?.xauusd) {
+      const { createXauUsdToolSession } = await import("../trading/agent/session.ts");
+      trading = createXauUsdToolSession(integrations.xauusd);
+    }
     // Start independent servers concurrently; consume results in config order
     // so names and collision suffixes remain stable across startup timings.
     const mounts = await Promise.allSettled(servers.map(async ([name, descriptor]) => {
@@ -302,8 +318,17 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
         const base = `${server}_${tool.name}`.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 64) || "mcp_tool";
         let name = base;
         for (let index = 2; registered.has(name); index += 1) { const suffix = `_${index}`; name = base.slice(0, 64 - suffix.length) + suffix; }
-        registered.set(name, { client, name: tool.name, schema });
+        registered.set(name, { kind: "mcp", client, name: tool.name, schema });
         definitions.push({ type: "function", function: { name, description, parameters } });
+        if (Buffer.byteLength(JSON.stringify(definitions)) > CATALOG_BYTES) throw new Error("MCP tool catalog exceeds the 1MB limit");
+      }
+    }
+    if (trading) {
+      for (const definition of trading.definitions) {
+        if (definitions.length >= TOOL_COUNT) throw new Error("MCP tool count exceeds the 128-tool limit");
+        if (registered.has(definition.function.name)) throw new Error("XAUUSD tool name collides with a mounted tool");
+        registered.set(definition.function.name, { kind: "xauusd", name: definition.function.name });
+        definitions.push(definition);
         if (Buffer.byteLength(JSON.stringify(definitions)) > CATALOG_BYTES) throw new Error("MCP tool catalog exceeds the 1MB limit");
       }
     }
@@ -313,14 +338,20 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
     if (closed || signal.aborted) throw new ChatToolSessionError("MCP session closed");
     const tool = registered.get(name);
     if (!tool) throw new Error("The requested tool was not advertised for this turn");
+    if (tool.kind === "xauusd") {
+      trading?.validate(name, args);
+      return;
+    }
     if (!object(args) || !tool.schema(args)) throw new Error("Tool arguments do not match the advertised input schema; use its required fields and types");
   };
   return {
     definitions, validate, close,
+    ...(trading ? { xauusd: trading } : {}),
     async execute(name, args, callSignal) {
       validate(name, args);
       if (callSignal.aborted) { await close(); throw aborted(); }
       const tool = registered.get(name)!;
+      if (tool.kind === "xauusd") return trading!.execute(name, args, callSignal);
       try {
         const result = await tool.client.call("tools/call", { name: tool.name, arguments: args }, AbortSignal.any([signal, callSignal]), CALL_MS);
         if (signal.aborted || callSignal.aborted) throw aborted();

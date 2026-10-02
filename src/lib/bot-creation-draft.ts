@@ -89,12 +89,12 @@ export class BotCreationDraft {
   dispose() { if (this.avatarObjectUrl) URL.revokeObjectURL(this.avatarObjectUrl); }
 
   private routine(input: RoutineInput, previous?: Routine): Routine {
-    const { groupId: _group, resultsThreadId: _results, schedule, ...fields } = input;
+    const { groupId: _group, resultsThreadId: _results, schedule, xauusd, ...fields } = input;
     const normalizedSchedule = schedule.type === "interval" ? {
       ...schedule, weekdays: schedule.weekdays ?? undefined,
       window: schedule.window ?? undefined, endsAt: schedule.endsAt ?? undefined,
     } : schedule;
-    return {
+    const routine: Routine = {
       id: previous?.id ?? `draft-${crypto.randomUUID()}`, createdAt: previous?.createdAt ?? Date.now(),
       updatedAt: Date.now(), nextRunAt: null, runOn: "maus", ...previous, ...fields,
       enabled: input.enabled ?? previous?.enabled ?? true, target: "bot", botId: this.id,
@@ -102,6 +102,9 @@ export class BotCreationDraft {
       durationMinutes: input.durationMinutes ?? previous?.durationMinutes ?? 30,
       schedule: normalizedSchedule,
     };
+    if (xauusd === null) delete routine.xauusd;
+    else if (xauusd !== undefined) routine.xauusd = xauusd;
+    return routine;
   }
 
   request: typeof api = async <T,>(path: string, init?: RequestInit): Promise<T> => {

@@ -35,6 +35,25 @@ describe("isolated creation draft", () => {
     expect(second.routines[0].enabled).toBe(false);
   });
 
+  it("omits a null XAUUSD marker and keeps a declared one", async () => {
+    const draft = new BotCreationDraft(EMPTY_BOT_DEFAULTS, vi.fn(), vi.fn() as typeof api);
+    const schedule = { type: "daily", time: "09:00", weekdays: [1] };
+    const marker = { environment: "PAPER", autonomyLevel: 0, permissions: ["market.read"] };
+    await draft.request("/api/routines", { method: "POST", body: JSON.stringify({
+      botId: draft.id, name: "Watch", prompt: "Watch", schedule, xauusd: null,
+    }) });
+    expect(draft.routines[0]).not.toHaveProperty("xauusd");
+    const id = draft.routines[0]?.id;
+    await draft.request(`/api/routines/${id}`, { method: "PATCH", body: JSON.stringify({
+      botId: draft.id, name: "Watch", prompt: "Watch", schedule, xauusd: marker,
+    }) });
+    expect(draft.routines[0]?.xauusd).toEqual(marker);
+    await draft.request(`/api/routines/${id}`, { method: "PATCH", body: JSON.stringify({
+      botId: draft.id, name: "Watch", prompt: "Watch", schedule, xauusd: null,
+    }) });
+    expect(draft.routines[0]).not.toHaveProperty("xauusd");
+  });
+
   it("refuses unsupported and cross-bot operations rather than reaching the live API", async () => {
     const network = vi.fn();
     const draft = new BotCreationDraft(EMPTY_BOT_DEFAULTS, vi.fn(), network as typeof api);

@@ -188,6 +188,27 @@ const ROUTINE_FIELDS_SCHEMA = {
     enum: ["skip", "queue"],
     description: "While this routine is still working, skip scheduled occurrences (default) or queue at most one run. Queue skips further occurrences until the pending run starts; it never builds an unlimited backlog. Manual and webhook requests are separate.",
   },
+  xauusd: {
+    type: "object",
+    additionalProperties: false,
+    description: "Optional XAUUSD monitoring declaration for this routine. It records environment, autonomy, and existing trading permissions. It does not grant broker access, store credentials, or approve a trade. Omit it for an ordinary routine.",
+    properties: {
+      environment: { type: "string", enum: ["SIMULATOR", "PAPER", "LIVE"] },
+      autonomy_level: { type: "integer", minimum: 0, maximum: 5 },
+      permissions: {
+        type: "array",
+        items: {
+          type: "string",
+          enum: ["market.read", "decision.propose", "intent.propose", "specialist.consult"],
+        },
+      },
+    },
+    required: ["environment", "autonomy_level", "permissions"],
+  },
+  clear_xauusd: {
+    type: "boolean",
+    description: "Only for updates: true removes an existing XAUUSD declaration. Do not combine with xauusd.",
+  },
 } as const;
 
 const PROPOSAL_OUTCOME = " Read the result: granted Full Access may apply the change immediately. If applied, continue the requested work without another confirmation. Only a pending result requires ending the turn and waiting for the in-app decision. Never claim success from the permission mode alone; report failed or cancelled results honestly. This does not elevate another bot's execution permissions.";

@@ -425,6 +425,13 @@ import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
 import * as vps from "./vps-computer.ts";
 import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
+import { settleNativeTradingApprovalFromEnvironment, tradingResponderId } from "./trading/approval/native.ts";
+import { readInstalledXauUsdMarketDataProvider, startNativeRoutineTurn } from "./trading/occurrence/runtime.ts";
+import { readDeskChartCandles } from "./trading/desk/market.ts";
+import { loadTradingRoom, roomLegacyFields } from "./trading/desk/load.ts";
+import { settleDeskApproval } from "./trading/desk/approval.ts";
+import { installConfiguredOandaProvider, OANDA_API_TOKEN_ENV } from "./trading/infrastructure/market_data/oanda.ts";
+import { queryTokenRejected, tradingHealthReport } from "./trading/production/health.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
 import { BUILT_IN_BROWSER_SYSTEM_PROMPT } from "./browser-engine.ts";
 import { BrowserRuntime, browserRuntimeEnv } from "./browser-runtime.ts";
@@ -583,6 +590,11 @@ import { createDesktopViewer, desktopViewerUrl } from "./routes/desktop-viewer.t
 import { localDesktopTarget, localVmViewerStatus, viewerTargetId } from "./desktop-viewer-targets.ts";
 import { createAntigravityLeftoverRoutes } from "./routes/antigravity-leftovers.ts";
 import { findAntigravityLeftovers, removeAntigravityLeftovers } from "./drivers/antigravity-temp.ts";
+
+// Copy a complete OANDA configuration into the market-data provider, then
+// drop the token before any `{ ...process.env }` snapshot can inherit it.
+installConfiguredOandaProvider(process.env);
+delete process.env[OANDA_API_TOKEN_ENV];
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const WEBHOOK_PORT = Number(process.env.OMB_WEBHOOK_PORT || PORT + 1);
@@ -10336,7 +10348,19 @@ routines = new RoutineManager({
     }
   },
   startTurn: async (botId, threadId, prompt, runOn, triggerSource, onDispatchError) => {
-    await startTurn(botId, prompt, { threadId, runOn, automationSource: triggerSource, onDispatchError });
+    const bot = store.bot(botId);
+    const instance = bot ? turnInstance(bot, runOn, threadId) : null;
+    await startNativeRoutineTurn({
+      active: (routines?.listRuns() ?? []).filter((run) =>
+        run.threadId === threadId && (run.status === "running" || run.status === "waiting")),
+      markerOf: (routineId) => routines?.listRoutines().find((routine) => routine.id === routineId)?.xauusd,
+      threadId,
+      driverKind: instance?.driverKind ?? "",
+      env: process.env,
+      marketDataProvider: readInstalledXauUsdMarketDataProvider(),
+      startedAt: new Date().toISOString(),
+      startTurn: () => startTurn(botId, prompt, { threadId, runOn, automationSource: triggerSource, onDispatchError }),
+    });
   },
   startGoal: async (groupId, threadId, prompt, coordinatorBotId, runId, _onDispatchError) => {
     startGroupTurn(groupId, prompt, undefined, undefined, "goal", undefined, {
@@ -14838,12 +14862,35 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     if (method === "GET" && path === "/api/health" && !gate.auth) {
       return json(res, 200, { app: "openmausbot" });
     }
+    if (method === "GET" && path === "/api/health/trading") {
+      if (queryTokenRejected(url.search)) return json(res, 401, { error: "query credentials are not accepted" });
+      return json(res, 200, tradingHealthReport(process.env));
+    }
     // The brand is public too: the sign-in page must carry the deployment's
     // name and icon before anyone has a session, and it holds nothing secret.
     if (method === "GET" && path === "/api/brand" && !gate.auth) {
       return json(res, 200, loadBrand());
     }
     if (!gate.auth) return json(res, gate.status, { error: gate.error });
+    if (path === "/api/trading/desk" && queryTokenRejected(url.search)) {
+      return json(res, 401, { error: "query credentials are not accepted" });
+    }
+    if (method === "GET" && path === "/api/trading/desk") {
+      const now = new Date().toISOString();
+      const chart = await readDeskChartCandles({
+        provider: readInstalledXauUsdMarketDataProvider(),
+        now,
+      });
+      const requestedThreadId = url.searchParams.get("threadId");
+      const room = loadTradingRoom(process.env, chart, now, requestedThreadId);
+      return json(res, 200, { ...roomLegacyFields(room), room, chart });
+    }
+    if (method === "POST" && path === "/api/trading/desk/approval") {
+      if (queryTokenRejected(url.search)) return json(res, 401, { error: "query credentials are not accepted" });
+      const body = await readBody(req);
+      const result = settleDeskApproval(process.env, gate.auth, body);
+      return json(res, result.status, result.body);
+    }
     const auth = gate.auth;
     if (HOSTED_WORKSPACE && auth.kind === "session") {
       const failure = workspaceAccess
@@ -20986,6 +21033,14 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           return json(res, 200, { ok: true, outcome: behavior === "allow" ? "allowed-once" : "rejected" });
         }
         const outcome = await answerRequest(bot.threadId, bot.modelSelection.instanceId, String(body.requestId), behavior, body.message, { id: bot.id, name: bot.name }, body.always === true, body.rememberCommand === true);
+        settleNativeTradingApprovalFromEnvironment(process.env, {
+          requestId: String(body.requestId),
+          behavior,
+          message: typeof body.message === "string" ? body.message : undefined,
+          source: "user",
+          responderId: tradingResponderId(auth),
+          resolvedAt: new Date().toISOString(),
+        });
         return json(res, 200, { ok: true, outcome });
       });
     }
@@ -21114,6 +21169,14 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (!owner && !pending) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
         const requestOwner = owner ? botForThread(owner.id, threadId) : null;
         const outcome = await answerRequest(threadId, requestOwner?.modelSelection.instanceId ?? "", requestId, behavior, body.message, owner ? { id: owner.id, name: owner.name } : undefined, body.always === true, body.rememberCommand === true);
+        settleNativeTradingApprovalFromEnvironment(process.env, {
+          requestId,
+          behavior,
+          message: typeof body.message === "string" ? body.message : undefined,
+          source: "user",
+          responderId: tradingResponderId(auth),
+          resolvedAt: new Date().toISOString(),
+        });
         return json(res, 200, { ok: true, outcome });
       });
     }

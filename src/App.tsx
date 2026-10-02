@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Menu } from "lucide-react";
-import { CLOUD_LINK_SETTINGS, StoreProvider, useStore } from "@/state/store";
+import { CLOUD_LINK_SETTINGS, openAttachedConversation, StoreProvider, useStore } from "@/state/store";
 import { useWelcomeViewer, WelcomeGate } from "@/components/onboarding/WelcomeGate";
 import { cloudSignInDue, spotlightsQuiet, type WelcomeViewer } from "@/lib/onboarding";
 import { FirstConversationTour } from "@/components/onboarding/FirstConversationTour";
@@ -68,6 +68,18 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
     }
     return window.ogb.environments.onOpenSettings?.(open);
   }, [dispatch]);
+  const openedAttachedThread = useRef(false);
+  useEffect(() => {
+    if (openedAttachedThread.current) return;
+    const url = new URL(window.location.href);
+    const threadId = url.searchParams.get("threadId");
+    if (!threadId) return;
+    if (!state.connected || (state.bots.length === 0 && state.groups.length === 0)) return;
+    openedAttachedThread.current = true;
+    openAttachedConversation(dispatch, threadId, { bots: state.bots, groups: state.groups });
+    url.searchParams.delete("threadId");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [dispatch, state.bots, state.connected, state.groups]);
   // Mobile-only drawer state. Above md, none of these properties are emitted
   // at all — Sidebar scopes every mobile class with max-md: rather than
   // cancelling them with md:, which would still emit a translate value and

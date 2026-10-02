@@ -9,6 +9,7 @@
 import { CREDENTIAL_TARGETS, isCredentialTargetId } from "../../shared/credential-request.ts";
 import { parseOptionsCardInput, WATCHER_OPTIONS_CARD_BOT_ID } from "../../shared/options-card.ts";
 import { normalizeCronSchedule } from "../../shared/routine-schedule.ts";
+import { parseXauUsdRoutineMarker } from "../../shared/trading/routine-marker.ts";
 
 import { peerName } from "../peer-roster.ts";
 import { renderPeerDeliveryReceipts, type PeerDeliveryOutcome, type PeerDeliveryReceipt } from "../peer-delivery.ts";
@@ -340,6 +341,14 @@ function routineFields(args: Json): { fields: Json; error?: string } {
   if (args.clear_timeout === true && timeoutMinutes != null) {
     return { fields, error: "Choose timeout_minutes or clear_timeout, not both." };
   }
+  if (args.clear_xauusd != null && typeof args.clear_xauusd !== "boolean") {
+    return { fields, error: "clear_xauusd must be true or false." };
+  }
+  if (args.xauusd != null && args.clear_xauusd === true) {
+    return { fields, error: "Choose xauusd or clear_xauusd, not both." };
+  }
+  const marker = xauusdMarker(args);
+  if (marker.error) return { fields, error: marker.error };
   if (typeof args.name === "string") fields.name = args.name.trim();
   if (typeof args.instructions === "string") fields.instructions = args.instructions.trim();
   if (args.schedule !== undefined && args.schedule !== null) {
@@ -352,7 +361,37 @@ function routineFields(args: Json): { fields: Json; error?: string } {
   else if (timeoutMinutes != null) fields.timeoutMinutes = timeoutMinutes;
   if (typeof args.continuity === "boolean") fields.continuity = args.continuity;
   if (args.overlap !== undefined) fields.overlap = args.overlap;
+  if (marker.clear) fields.xauusd = null;
+  else if (marker.value !== undefined) fields.xauusd = marker.value;
   return { fields };
+}
+
+function xauusdMarker(args: Json): { value?: Json; clear?: boolean; error?: string } {
+  if (args.clear_xauusd === true) return { clear: true };
+  if (args.xauusd === undefined || args.xauusd === null) return {};
+  if (!jsonRecord(args.xauusd)) {
+    return { error: "xauusd must be an object with environment, autonomy_level, and permissions." };
+  }
+  const source: Json = { ...args.xauusd };
+  if (source.autonomy_level != null && source.autonomyLevel != null && source.autonomy_level !== source.autonomyLevel) {
+    return { error: "Choose one autonomy_level; autonomy_level and autonomyLevel disagree." };
+  }
+  if (source.autonomyLevel === undefined && source.autonomy_level !== undefined) {
+    source.autonomyLevel = source.autonomy_level;
+    delete source.autonomy_level;
+  }
+  try {
+    const parsed = parseXauUsdRoutineMarker(source);
+    return {
+      value: {
+        environment: parsed.environment,
+        autonomyLevel: parsed.autonomyLevel,
+        permissions: [...parsed.permissions],
+      },
+    };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "XAUUSD routine marker was rejected." };
+  }
 }
 
 /** Full Access is decided by the harness, not inferred from a model claim or

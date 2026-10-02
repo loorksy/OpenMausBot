@@ -9,6 +9,7 @@
  */
 
 import type { RoutineCronSchedule } from "./routine-schedule.ts";
+import type { XauUsdRoutineMarker } from "./trading/routine-marker.ts";
 
 export type RoutineRequestRunOn = "maus" | "cloud";
 
@@ -60,14 +61,18 @@ export interface RoutineRequestDefinition {
   continuity?: boolean;
   /** Skip by default, or keep at most one scheduled run waiting. */
   overlap?: "skip" | "queue";
+  /** Optional XAUUSD monitoring declaration. It does not approve a trade. */
+  xauusd?: XauUsdRoutineMarker;
 }
 
 export type RoutineRequestChanges =
-  & Omit<Partial<RoutineRequestDefinition>, "schedule" | "timeoutMinutes">
+  & Omit<Partial<RoutineRequestDefinition>, "schedule" | "timeoutMinutes" | "xauusd">
   & {
     schedule?: RoutineRequestScheduleChanges;
     /** `null` removes an existing safety cap. */
     timeoutMinutes?: number | null;
+    /** `null` removes an existing XAUUSD declaration. */
+    xauusd?: XauUsdRoutineMarker | null;
   };
 
 /** Another bot in the proposer's section that this proposal targets: a
