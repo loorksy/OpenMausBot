@@ -18,6 +18,9 @@ import { createChatToolApproval } from "./chat-tool-approval.ts";
 import { ChatProtocolError, ChatReasoningDetails, ChatToolCalls, MAX_CHAT_TOOL_CALLS, object, type ChatToolCall } from "./openai-chat-protocol.ts";
 import { appendNative } from "./native.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
+import type { XauUsdTurnGrant } from "../trading/agent/grant.ts";
+import { TradingDomainError } from "../../shared/trading/errors.ts";
+import { bindXauUsdProviderTurn, xauUsdRoutineTurnIsPending } from "../trading/occurrence/runtime.ts";
 
 export interface OpenAIChatMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -438,6 +441,29 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     active.set(turn.threadId, turnEntry);
     emit({ ...base(turn.threadId, turnId), type: "turn.started" });
     emit({ ...base(turn.threadId, turnId), type: "session.started", sessionId: null, model });
+    let xauusdGrant: XauUsdTurnGrant | undefined;
+    try {
+      if (options.tools === false && xauUsdRoutineTurnIsPending(turn.threadId)) {
+        throw new TradingDomainError(
+          "tool_unavailable",
+          "XAUUSD tools cannot mount while chat tools are disabled. Failing closed.",
+        );
+      }
+      xauusdGrant = bindXauUsdProviderTurn({
+        threadId: turn.threadId,
+        providerTurnId: turnId,
+        modelProvider: options.driverKind,
+        modelId: model,
+        observedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      active.delete(turn.threadId);
+      const message = (error instanceof Error ? error.message : "XAUUSD runtime mount failed").slice(0, 2_000);
+      emit({ ...base(turn.threadId, turnId), type: "runtime.error", message, terminal: true });
+      emit({ ...base(turn.threadId, turnId), type: "turn.completed", ok: false, stopReason: "error", cost: null });
+      resolveDone();
+      throw error;
+    }
 
     void (async () => {
       let tools: ChatToolSession | undefined;
@@ -450,7 +476,10 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       const denials: string[] = [];
       const seenCalls = new Set<string>();
       try {
-        tools = await mountChatTools(options.tools === false ? undefined : turn.integrations, abort.signal, options.computerUse);
+        const mountedIntegrations = xauusdGrant
+          ? { ...turn.integrations, xauusd: xauusdGrant }
+          : turn.integrations;
+        tools = await mountChatTools(options.tools === false ? undefined : mountedIntegrations, abort.signal, options.computerUse);
         let optionalQuestionOnly = options.tools !== false && tools.definitions.length === 0;
         // The runtime's one built-in tool rides the same list: ask_user is
         // how a chat-completions engine reaches a person. An MCP server that

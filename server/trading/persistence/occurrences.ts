@@ -48,9 +48,30 @@ export interface RoutineOccurrenceInsert {
   readonly startedAt: string;
 }
 
+export interface ProviderTurnAttach {
+  readonly routineId: string;
+  readonly routineRunId: string;
+  readonly threadId: string;
+  readonly providerTurnId: string;
+}
+
 export interface OccurrenceRepository {
   insertRoutineOccurrence(input: RoutineOccurrenceInsert): TradingOccurrence;
   readByRoutineRun(routineRunId: string): TradingOccurrence | null;
+  attachProviderTurn(input: ProviderTurnAttach): TradingOccurrence;
+}
+
+const ATTACH_KEYS = new Set(["routineId", "routineRunId", "threadId", "providerTurnId"]);
+
+/** Zero matches and more than one match both fail closed. */
+export function requireSingleCorrelation<T>(matches: readonly T[]): T {
+  if (matches.length !== 1) {
+    throw new TradingDomainError(
+      "trading_store_rejected",
+      "XAUUSD routine correlation did not match exactly one occurrence. Failing closed.",
+    );
+  }
+  return matches[0] as T;
 }
 
 interface OccurrenceRow {
@@ -130,6 +151,79 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
         WHERE routine_run_id = ?
       `).get(routineRunId) as OccurrenceRow | undefined;
       return stored === undefined ? null : seal(fromRow(stored));
+    },
+    attachProviderTurn(input) {
+      assertNoSecretFields(input, "trading occurrence");
+      if (input === null || typeof input !== "object" || Array.isArray(input)) {
+        throw new TradingDomainError("trading_store_rejected", "Provider turn correlation was rejected. Failing closed.");
+      }
+      for (const key of Object.keys(input)) {
+        if (!ATTACH_KEYS.has(key)) {
+          throw new TradingDomainError("trading_store_rejected", "Provider turn correlation contains an unsupported field. Failing closed.");
+        }
+      }
+      if (!recordIdSchema.safeParse(input.providerTurnId).success) {
+        throw new TradingDomainError("trading_store_rejected", "Provider turn id was rejected. Failing closed.");
+      }
+      const matches = db.prepare(`
+        SELECT
+          occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
+          instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
+          risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+          proposal_binding_hash, domain_status, failure_code, started_at, completed_at
+        FROM trading_occurrences
+        WHERE routine_id = ? AND routine_run_id = ? AND thread_id = ?
+      `).all(input.routineId, input.routineRunId, input.threadId) as unknown as OccurrenceRow[];
+      const current = requireSingleCorrelation(matches);
+      if (current.provider_turn_id === input.providerTurnId) return seal(fromRow(current));
+      if (current.provider_turn_id != null) {
+        throw new TradingDomainError(
+          "trading_store_rejected",
+          "Provider turn correlation already differs. Failing closed.",
+        );
+      }
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const result = db.prepare(`
+          UPDATE trading_occurrences
+          SET provider_turn_id = ?
+          WHERE occurrence_id = ? AND provider_turn_id IS NULL
+        `).run(input.providerTurnId, current.occurrence_id);
+        if (result.changes !== 1) {
+          throw new TradingDomainError(
+            "trading_store_rejected",
+            "Provider turn correlation was rejected. Failing closed.",
+          );
+        }
+        db.exec("COMMIT");
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          // The occurrence transaction is already closed.
+        }
+        if (error instanceof TradingDomainError) throw error;
+        throw new TradingDomainError(
+          "trading_store_rejected",
+          "Provider turn correlation was rejected. Failing closed.",
+        );
+      }
+      const stored = db.prepare(`
+        SELECT
+          occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
+          instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
+          risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+          proposal_binding_hash, domain_status, failure_code, started_at, completed_at
+        FROM trading_occurrences
+        WHERE occurrence_id = ?
+      `).get(current.occurrence_id) as OccurrenceRow | undefined;
+      if (!stored || stored.provider_turn_id !== input.providerTurnId) {
+        throw new TradingDomainError(
+          "trading_store_rejected",
+          "Provider turn correlation was rejected. Failing closed.",
+        );
+      }
+      return seal(fromRow(stored));
     },
   };
 }

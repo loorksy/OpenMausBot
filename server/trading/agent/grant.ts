@@ -8,10 +8,14 @@ import type { ReplaySession } from "../replay/session.ts";
 import type { TradingPermission } from "./catalog.ts";
 import type { ModelRoutingPolicy, TradingTaskClass } from "./routing.ts";
 
-/** Ids copied from the OpenMausBot turn. The trading layer does not mint a second turn. */
+/** Ids copied from the OpenMausBot turn. The trading layer does not mint a second turn.
+ * Routine fields are present only for a native routine occurrence. */
 export interface XauUsdRuntimeLink {
   readonly runtimeThreadId: string;
   readonly runtimeTurnId: string;
+  readonly routineId?: string;
+  readonly routineRunId?: string;
+  readonly occurrenceId?: string;
   nextRuntimeEventId(): string;
   nextTradingEventId(): string;
   nextRecordId(): string;

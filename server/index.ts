@@ -425,6 +425,7 @@ import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
 import * as vps from "./vps-computer.ts";
 import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
+import { readInstalledXauUsdMarketDataProvider, startNativeRoutineTurn } from "./trading/occurrence/runtime.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
 import { BUILT_IN_BROWSER_SYSTEM_PROMPT } from "./browser-engine.ts";
 import { BrowserRuntime, browserRuntimeEnv } from "./browser-runtime.ts";
@@ -10336,7 +10337,19 @@ routines = new RoutineManager({
     }
   },
   startTurn: async (botId, threadId, prompt, runOn, triggerSource, onDispatchError) => {
-    await startTurn(botId, prompt, { threadId, runOn, automationSource: triggerSource, onDispatchError });
+    const bot = store.bot(botId);
+    const instance = bot ? turnInstance(bot, runOn, threadId) : null;
+    await startNativeRoutineTurn({
+      active: (routines?.listRuns() ?? []).filter((run) =>
+        run.threadId === threadId && (run.status === "running" || run.status === "waiting")),
+      markerOf: (routineId) => routines?.listRoutines().find((routine) => routine.id === routineId)?.xauusd,
+      threadId,
+      driverKind: instance?.driverKind ?? "",
+      env: process.env,
+      marketDataProvider: readInstalledXauUsdMarketDataProvider(),
+      startedAt: new Date().toISOString(),
+      startTurn: () => startTurn(botId, prompt, { threadId, runOn, automationSource: triggerSource, onDispatchError }),
+    });
   },
   startGoal: async (groupId, threadId, prompt, coordinatorBotId, runId, _onDispatchError) => {
     startGroupTurn(groupId, prompt, undefined, undefined, "goal", undefined, {

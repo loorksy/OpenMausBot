@@ -37,6 +37,7 @@ export const TRADING_ERROR_CODES = [
   "trading_store_not_implemented",
   "trading_store_rejected",
   "market_data_rejected",
+  "market_data_provider_unavailable",
   "unsupported_timeframe",
   "provider_failure",
   "future_timestamp",
