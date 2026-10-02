@@ -70,12 +70,24 @@ export interface EligibilityReferenceWrite {
   readonly failureCode: string | null;
 }
 
+/** Correlation for one authorized execution request. It does not store the
+ * broker payload or a second copy of the execution attempt. */
+export interface ExecutionReceiptWrite {
+  readonly occurrenceId: string;
+  readonly agentRunId: string;
+  readonly environment: TradingEnvironment;
+  readonly executionRequestId: string;
+  readonly failureCode: string | null;
+  readonly domainStatus: "submitted_unknown" | null;
+}
+
 export interface OccurrenceRepository {
   insertRoutineOccurrence(input: RoutineOccurrenceInsert): TradingOccurrence;
   readByRoutineRun(routineRunId: string): TradingOccurrence | null;
   readByOccurrenceId(occurrenceId: string): TradingOccurrence | null;
   attachProviderTurn(input: ProviderTurnAttach): TradingOccurrence;
   attachEligibilityReferences(input: EligibilityReferenceWrite): TradingOccurrence;
+  attachExecutionReceipt(input: ExecutionReceiptWrite): TradingOccurrence;
 }
 
 const ATTACH_KEYS = new Set(["routineId", "routineRunId", "threadId", "providerTurnId"]);
@@ -90,6 +102,14 @@ const REFERENCE_KEYS = new Set([
   "approvalId",
   "proposalBindingHash",
   "failureCode",
+]);
+const RECEIPT_KEYS = new Set([
+  "occurrenceId",
+  "agentRunId",
+  "environment",
+  "executionRequestId",
+  "failureCode",
+  "domainStatus",
 ]);
 
 /** Zero matches and more than one match both fail closed. */
@@ -399,6 +419,116 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
       }
       return seal(fromRow(stored));
     },
+    attachExecutionReceipt(input) {
+      assertNoSecretFields(input, "trading occurrence");
+      if (input === null || typeof input !== "object" || Array.isArray(input)) {
+        throw new TradingDomainError("trading_store_rejected", "Execution receipt was rejected. Failing closed.");
+      }
+      for (const key of Object.keys(input)) {
+        if (!RECEIPT_KEYS.has(key)) {
+          throw new TradingDomainError("trading_store_rejected", "Execution receipt contains an unsupported field. Failing closed.");
+        }
+      }
+      const executionRequestId = nullableReference(input.executionRequestId, "Execution request id");
+      const failureCode = nullableFailure(input.failureCode);
+      if (executionRequestId === null || !recordIdSchema.safeParse(input.occurrenceId).success || !recordIdSchema.safeParse(input.agentRunId).success) {
+        throw new TradingDomainError("trading_store_rejected", "Execution receipt identity was rejected. Failing closed.");
+      }
+      if (input.domainStatus !== null && input.domainStatus !== "submitted_unknown") {
+        throw new TradingDomainError("trading_store_rejected", "Execution receipt status was rejected. Failing closed.");
+      }
+      const environment = tradingEnvironmentSchema.safeParse(input.environment);
+      if (!environment.success) {
+        throw new TradingDomainError("trading_store_rejected", "Execution receipt environment was rejected. Failing closed.");
+      }
+      const current = db.prepare(`
+        SELECT
+          occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
+          instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
+          risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+          proposal_binding_hash, domain_status, failure_code, started_at, completed_at
+        FROM trading_occurrences
+        WHERE occurrence_id = ?
+      `).get(input.occurrenceId) as OccurrenceRow | undefined;
+      if (current === undefined || current.provider_turn_id === null) {
+        throw new TradingDomainError("trading_store_rejected", "Execution receipt matched no bound occurrence. Failing closed.");
+      }
+      if (current.agent_run_id !== input.agentRunId) {
+        throw new TradingDomainError("agent_run_mismatch", "Execution receipt agent run does not match. Failing closed.");
+      }
+      if (current.environment !== environment.data) {
+        throw new TradingDomainError("trading_store_rejected", "Execution receipt environment does not match. Failing closed.");
+      }
+      agree(current.execution_request_id, executionRequestId);
+      agree(current.failure_code, failureCode);
+      const nextStatus = input.domainStatus === "submitted_unknown"
+        && current.domain_status === "turn_not_started"
+        ? "submitted_unknown"
+        : current.domain_status;
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const result = db.prepare(`
+          UPDATE trading_occurrences
+          SET execution_request_id = COALESCE(execution_request_id, ?),
+              failure_code = COALESCE(failure_code, ?),
+              domain_status = CASE
+                WHEN domain_status = 'turn_not_started' AND ? = 'submitted_unknown' THEN 'submitted_unknown'
+                ELSE domain_status
+              END
+          WHERE occurrence_id = ?
+            AND agent_run_id = ?
+            AND environment = ?
+            AND provider_turn_id IS NOT NULL
+            AND (execution_request_id IS NULL OR execution_request_id = ?)
+            AND (failure_code IS NULL OR ? IS NULL OR failure_code = ?)
+        `).run(
+          executionRequestId,
+          failureCode,
+          input.domainStatus,
+          input.occurrenceId,
+          input.agentRunId,
+          environment.data,
+          executionRequestId,
+          failureCode,
+          failureCode,
+        );
+        if (result.changes !== 1 && current.execution_request_id !== executionRequestId) {
+          throw new TradingDomainError("trading_store_rejected", "Execution receipt was rejected. Failing closed.");
+        }
+        db.exec("COMMIT");
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          // The occurrence transaction is already closed.
+        }
+        if (error instanceof TradingDomainError) throw error;
+        throw new TradingDomainError("trading_store_rejected", "Execution receipt was rejected. Failing closed.");
+      }
+      const stored = db.prepare(`
+        SELECT
+          occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
+          instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
+          risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+          proposal_binding_hash, domain_status, failure_code, started_at, completed_at
+        FROM trading_occurrences
+        WHERE occurrence_id = ?
+      `).get(input.occurrenceId) as OccurrenceRow | undefined;
+      if (
+        stored === undefined
+        || stored.execution_request_id !== (current.execution_request_id ?? executionRequestId)
+        || stored.failure_code !== (current.failure_code ?? failureCode)
+        || stored.domain_status !== nextStatus
+        || stored.provider_turn_id !== current.provider_turn_id
+        || stored.agent_run_id !== current.agent_run_id
+        || stored.routine_id !== current.routine_id
+        || stored.routine_run_id !== current.routine_run_id
+        || stored.thread_id !== current.thread_id
+      ) {
+        throw new TradingDomainError("immutable_revision", "Execution receipt already differs. Failing closed.");
+      }
+      return seal(fromRow(stored));
+    },
   };
 }
 
@@ -418,9 +548,10 @@ function nullableFailure(value: string | null): string | null {
   return value;
 }
 
-/** A null column may be filled once. A different value is an immutable revision. */
+/** A null column may be filled once. A later null leaves the stored value.
+ * Two different non-null values are an immutable revision. */
 function agree(current: string | null, next: string | null): void {
-  if (current === next || current === null) return;
+  if (next === null || current === null || current === next) return;
   throw new TradingDomainError("immutable_revision", "Eligibility correlation already differs. Failing closed.");
 }
 

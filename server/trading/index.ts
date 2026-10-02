@@ -94,8 +94,8 @@ export {
 export type { PolicyConfig, PolicyDecision, PolicyState } from "./policy/index.ts";
 export { evaluateXauUsdProposal, PROPOSAL_ENGINE_VERSION } from "./proposal/index.ts";
 export type { ProposalEvaluation, ProposalOutcome } from "./proposal/index.ts";
-export { evaluateExecutionEligibility, ELIGIBILITY_HANDOFF_VERSION } from "./eligibility/index.ts";
-export type { EligibilityHandoff, EligibilityHandoffInput } from "./eligibility/index.ts";
+export { evaluateExecutionEligibility, ELIGIBILITY_HANDOFF_VERSION, submitEligibleExecution, EXECUTION_HANDOFF_VERSION } from "./eligibility/index.ts";
+export type { EligibilityHandoff, EligibilityHandoffInput, EligibleExecutionResult } from "./eligibility/index.ts";
 export {
   assessApproval,
   parseApprovalConfig,
