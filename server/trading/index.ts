@@ -9,7 +9,8 @@
  * risk, policy, approval, proposal-binding, and fire-time gate engines.
  * A broker submit happens only through the execution boundary after
  * ELIGIBLE_FOR_EXECUTION. Reconciliation reads a broker snapshot and does
- * not submit. */
+ * not submit. Phase 10.3 step 6 records that submission result and the
+ * reconciliation run on the same trading occurrence. */
 
 export * from "./domain/index.ts";
 export { foundationControl } from "./control/boundaries.ts";
@@ -95,6 +96,7 @@ export type { PolicyConfig, PolicyDecision, PolicyState } from "./policy/index.t
 export { evaluateXauUsdProposal, PROPOSAL_ENGINE_VERSION } from "./proposal/index.ts";
 export type { ProposalEvaluation, ProposalOutcome } from "./proposal/index.ts";
 export { evaluateExecutionEligibility, ELIGIBILITY_HANDOFF_VERSION, submitEligibleExecution, EXECUTION_HANDOFF_VERSION } from "./eligibility/index.ts";
+export { executionReceiptFor, OCCURRENCE_LIFECYCLE_VERSION, reconcileOccurrenceLifecycle } from "./occurrence/lifecycle.ts";
 export type { EligibilityHandoff, EligibilityHandoffInput, EligibleExecutionResult } from "./eligibility/index.ts";
 export {
   assessApproval,

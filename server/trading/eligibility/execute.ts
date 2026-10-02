@@ -9,6 +9,7 @@ import {
   type ExecutionQuote,
   type ExecutionSubmitInput,
 } from "../execution/submit.ts";
+import { executionReceiptFor } from "../occurrence/lifecycle.ts";
 import type { OccurrenceRepository, TradingOccurrence } from "../persistence/occurrences.ts";
 import {
   evaluateExecutionEligibility,
@@ -136,19 +137,11 @@ function authorizedOccurrence(input: EligibleExecutionInput, eligibility: Eligib
 
 function recordReceipt(input: EligibleExecutionInput, row: TradingOccurrence, execution: ExecutionDecision): void {
   const occurrence = input.occurrence;
-  if (occurrence == null || execution.executionIdentity === null || execution.state === "NOT_SUBMITTED") return;
+  if (occurrence == null) return;
   if (row.executionRequestId !== null && row.executionRequestId !== execution.id) return;
-  const failureCode = execution.state === "SUBMISSION_ACCEPTED" || execution.state === "FILL_REPORTED"
-    ? null
-    : execution.reasons[0] ?? null;
-  occurrence.repository.attachExecutionReceipt({
-    occurrenceId: row.occurrenceId,
-    agentRunId: row.agentRunId,
-    environment: row.environment,
-    executionRequestId: execution.id,
-    failureCode,
-    domainStatus: execution.state === "SUBMISSION_UNKNOWN" ? "submitted_unknown" : null,
-  });
+  const receipt = executionReceiptFor(row, execution);
+  if (receipt === null) return;
+  occurrence.repository.attachExecutionReceipt(receipt);
 }
 
 function closed(eligibility: EligibilityHandoff | null): EligibleExecutionResult {

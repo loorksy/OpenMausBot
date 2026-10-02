@@ -165,6 +165,23 @@ CREATE TABLE IF NOT EXISTS trading_occurrences (
   approval_id TEXT,
   execution_request_id TEXT,
   reconciliation_run_id TEXT,
+  execution_state TEXT CHECK (
+    execution_state IS NULL OR execution_state IN (
+      'NOT_SUBMITTED',
+      'SUBMISSION_REJECTED',
+      'SUBMISSION_ACCEPTED',
+      'SUBMISSION_UNKNOWN',
+      'FILL_REPORTED'
+    )
+  ),
+  reconciliation_state TEXT CHECK (
+    reconciliation_state IS NULL OR reconciliation_state IN (
+      'RECONCILED',
+      'DEGRADED',
+      'DESYNCED',
+      'UNKNOWN'
+    )
+  ),
   proposal_binding_hash TEXT,
   domain_status TEXT NOT NULL CHECK (domain_status IN (
     'turn_not_started',

@@ -23,10 +23,13 @@ import { TRADING_STORE_SCHEMA_SQL } from "./schema.ts";
  * create a database. */
 /** Phase 9 ledger is version 1. Phase 10 adds job tables as version 2.
  * Phase 10.3 step 1 adds trading_occurrences as version 3.
- * Phase 10.3 step 3 adds trading approval transports as version 4. */
-export const TRADING_STORE_SCHEMA_VERSION = 4 as const;
+ * Phase 10.3 step 3 adds trading approval transports as version 4.
+ * Phase 10.3 step 6 adds occurrence execution and reconciliation labels
+ * as version 5. Those labels cite the existing ledger and reconciliation
+ * enums. They are not a second state machine. */
+export const TRADING_STORE_SCHEMA_VERSION = 5 as const;
 
-const TRADING_STORE_SCHEMA_VERSIONS = [0, 1, 2, 3, TRADING_STORE_SCHEMA_VERSION] as const;
+const TRADING_STORE_SCHEMA_VERSIONS = [0, 1, 2, 3, 4, TRADING_STORE_SCHEMA_VERSION] as const;
 
 export interface OpenTradingStoreInput {
   readonly path: string;
@@ -40,6 +43,7 @@ export interface TradingStore {
   readonly ledger: ExecutionLedger;
   readAttempts(identity: string): readonly ExecutionAttemptRecord[];
   readRequest(identity: string): PersistedExecutionRequest | null;
+  readRequestById(executionRequestId: string): PersistedExecutionRequest | null;
   readEvents(): readonly TradingEvent[];
   saveSnapshot(snapshot: BrokerAccountSnapshot): { readonly inserted: boolean };
   readSnapshot(snapshotId: string): BrokerAccountSnapshot | null;
@@ -124,6 +128,37 @@ function prepareFile(path: string): void {
   }
 }
 
+function ensureOccurrenceLifecycleColumns(db: DatabaseSync): void {
+  const table = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'trading_occurrences'",
+  ).get();
+  if (table === undefined) return;
+  const columns = new Set(
+    (db.prepare("PRAGMA table_info(trading_occurrences)").all() as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (!columns.has("execution_state")) {
+    db.exec(`ALTER TABLE trading_occurrences ADD COLUMN execution_state TEXT CHECK (
+      execution_state IS NULL OR execution_state IN (
+        'NOT_SUBMITTED',
+        'SUBMISSION_REJECTED',
+        'SUBMISSION_ACCEPTED',
+        'SUBMISSION_UNKNOWN',
+        'FILL_REPORTED'
+      )
+    )`);
+  }
+  if (!columns.has("reconciliation_state")) {
+    db.exec(`ALTER TABLE trading_occurrences ADD COLUMN reconciliation_state TEXT CHECK (
+      reconciliation_state IS NULL OR reconciliation_state IN (
+        'RECONCILED',
+        'DEGRADED',
+        'DESYNCED',
+        'UNKNOWN'
+      )
+    )`);
+  }
+}
+
 function migrate(db: DatabaseSync, environment: TradingEnvironment): void {
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -148,6 +183,7 @@ function migrate(db: DatabaseSync, environment: TradingEnvironment): void {
       db.exec("ALTER TABLE schema_meta ADD COLUMN partition_key TEXT NOT NULL DEFAULT ''");
     }
     db.exec(TRADING_STORE_SCHEMA_SQL);
+    ensureOccurrenceLifecycleColumns(db);
     const row = db.prepare("SELECT version, environment FROM schema_meta WHERE id = 1").get() as {
       version: number;
       environment: string;
@@ -203,6 +239,13 @@ function store(db: DatabaseSync, path: string, environment: TradingEnvironment):
       const row = db.prepare(
         "SELECT payload_json FROM execution_requests WHERE execution_identity = ?",
       ).get(identity) as { payload_json: string } | undefined;
+      if (row === undefined) return null;
+      return seal(parseRecord<PersistedExecutionRequest>(row.payload_json, isRequest));
+    },
+    readRequestById(executionRequestId) {
+      const row = db.prepare(
+        "SELECT payload_json FROM execution_requests WHERE execution_request_id = ?",
+      ).get(executionRequestId) as { payload_json: string } | undefined;
       if (row === undefined) return null;
       return seal(parseRecord<PersistedExecutionRequest>(row.payload_json, isRequest));
     },

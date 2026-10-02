@@ -4,6 +4,8 @@ import { tradingEnvironmentSchema, type ProvenanceStatus, type TradingEnvironmen
 import { TradingDomainError } from "../../../shared/trading/errors.ts";
 import { assertNoSecretFields, recordIdSchema, seal, utcTimestampSchema } from "../../../shared/trading/ids.ts";
 import { XAUUSD_INSTRUMENT } from "../../../shared/trading/instrument.ts";
+import { parseReconciliationState, type ReconciliationState } from "../../../shared/trading/reconciliation.ts";
+import { EXECUTION_STATES, type ExecutionState } from "../execution/result.ts";
 import {
   parseOccurrenceDomainStatus,
   routineAgentRunId,
@@ -33,6 +35,10 @@ export interface TradingOccurrence {
   readonly approvalId: string | null;
   readonly executionRequestId: string | null;
   readonly reconciliationRunId: string | null;
+  /** Citation of `execution_attempts.state`. It is not a second execution machine. */
+  readonly executionState: ExecutionState | null;
+  /** Citation of `reconciliation_runs.state`. It is not a second reconciliation machine. */
+  readonly reconciliationState: ReconciliationState | null;
   readonly proposalBindingHash: string | null;
   readonly domainStatus: OccurrenceDomainStatus;
   readonly failureCode: string | null;
@@ -77,8 +83,20 @@ export interface ExecutionReceiptWrite {
   readonly agentRunId: string;
   readonly environment: TradingEnvironment;
   readonly executionRequestId: string;
+  readonly executionState: Exclude<ExecutionState, "NOT_SUBMITTED">;
   readonly failureCode: string | null;
   readonly domainStatus: "submitted_unknown" | null;
+}
+
+/** Correlation for one existing reconciliation run. The run remains authoritative. */
+export interface ReconciliationReceiptWrite {
+  readonly occurrenceId: string;
+  readonly agentRunId: string;
+  readonly environment: TradingEnvironment;
+  readonly executionRequestId: string;
+  readonly reconciliationRunId: string;
+  readonly reconciliationState: ReconciliationState;
+  readonly reconciledAt: string;
 }
 
 export interface OccurrenceRepository {
@@ -88,6 +106,7 @@ export interface OccurrenceRepository {
   attachProviderTurn(input: ProviderTurnAttach): TradingOccurrence;
   attachEligibilityReferences(input: EligibilityReferenceWrite): TradingOccurrence;
   attachExecutionReceipt(input: ExecutionReceiptWrite): TradingOccurrence;
+  attachReconciliationReceipt(input: ReconciliationReceiptWrite): TradingOccurrence;
 }
 
 const ATTACH_KEYS = new Set(["routineId", "routineRunId", "threadId", "providerTurnId"]);
@@ -108,8 +127,18 @@ const RECEIPT_KEYS = new Set([
   "agentRunId",
   "environment",
   "executionRequestId",
+  "executionState",
   "failureCode",
   "domainStatus",
+]);
+const RECONCILIATION_KEYS = new Set([
+  "occurrenceId",
+  "agentRunId",
+  "environment",
+  "executionRequestId",
+  "reconciliationRunId",
+  "reconciliationState",
+  "reconciledAt",
 ]);
 
 /** Zero matches and more than one match both fail closed. */
@@ -141,6 +170,8 @@ interface OccurrenceRow {
   approval_id: string | null;
   execution_request_id: string | null;
   reconciliation_run_id: string | null;
+  execution_state: string | null;
+  reconciliation_state: string | null;
   proposal_binding_hash: string | null;
   domain_status: string;
   failure_code: string | null;
@@ -195,6 +226,7 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
           instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
           risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+          execution_state, reconciliation_state,
           proposal_binding_hash, domain_status, failure_code, started_at, completed_at
         FROM trading_occurrences
         WHERE routine_run_id = ?
@@ -208,6 +240,7 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
           instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
           risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+          execution_state, reconciliation_state,
           proposal_binding_hash, domain_status, failure_code, started_at, completed_at
         FROM trading_occurrences
         WHERE occurrence_id = ?
@@ -232,6 +265,7 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
           instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
           risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+          execution_state, reconciliation_state,
           proposal_binding_hash, domain_status, failure_code, started_at, completed_at
         FROM trading_occurrences
         WHERE routine_id = ? AND routine_run_id = ? AND thread_id = ?
@@ -275,6 +309,7 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
           instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
           risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+          execution_state, reconciliation_state,
           proposal_binding_hash, domain_status, failure_code, started_at, completed_at
         FROM trading_occurrences
         WHERE occurrence_id = ?
@@ -316,6 +351,7 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
           instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
           risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+          execution_state, reconciliation_state,
           proposal_binding_hash, domain_status, failure_code, started_at, completed_at
         FROM trading_occurrences
         WHERE occurrence_id = ?
@@ -340,7 +376,10 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
         providerTurnId: current.provider_turn_id,
         executionRequestId: current.execution_request_id,
         reconciliationRunId: current.reconciliation_run_id,
+        executionState: current.execution_state,
+        reconciliationState: current.reconciliation_state,
         domainStatus: current.domain_status,
+        completedAt: current.completed_at,
       };
       db.exec("BEGIN IMMEDIATE");
       try {
@@ -397,6 +436,7 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
           instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
           risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+          execution_state, reconciliation_state,
           proposal_binding_hash, domain_status, failure_code, started_at, completed_at
         FROM trading_occurrences
         WHERE occurrence_id = ?
@@ -413,7 +453,10 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
         || stored.provider_turn_id !== preserved.providerTurnId
         || stored.execution_request_id !== preserved.executionRequestId
         || stored.reconciliation_run_id !== preserved.reconciliationRunId
+        || stored.execution_state !== preserved.executionState
+        || stored.reconciliation_state !== preserved.reconciliationState
         || stored.domain_status !== preserved.domainStatus
+        || stored.completed_at !== preserved.completedAt
       ) {
         throw new TradingDomainError("immutable_revision", "Eligibility correlation already differs. Failing closed.");
       }
@@ -431,11 +474,24 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
       }
       const executionRequestId = nullableReference(input.executionRequestId, "Execution request id");
       const failureCode = nullableFailure(input.failureCode);
-      if (executionRequestId === null || !recordIdSchema.safeParse(input.occurrenceId).success || !recordIdSchema.safeParse(input.agentRunId).success) {
+      const executionState = parseStoredExecutionState(input.executionState);
+      if (executionRequestId === null || executionState === null || executionState === "NOT_SUBMITTED" || !recordIdSchema.safeParse(input.occurrenceId).success || !recordIdSchema.safeParse(input.agentRunId).success) {
         throw new TradingDomainError("trading_store_rejected", "Execution receipt identity was rejected. Failing closed.");
       }
       if (input.domainStatus !== null && input.domainStatus !== "submitted_unknown") {
         throw new TradingDomainError("trading_store_rejected", "Execution receipt status was rejected. Failing closed.");
+      }
+      if (executionState === "SUBMISSION_UNKNOWN" && input.domainStatus !== "submitted_unknown") {
+        throw new TradingDomainError("trading_store_rejected", "Unknown submission was not recorded as unknown. Failing closed.");
+      }
+      if (executionState !== "SUBMISSION_UNKNOWN" && input.domainStatus !== null) {
+        throw new TradingDomainError("trading_store_rejected", "Execution receipt status was rejected. Failing closed.");
+      }
+      if ((executionState === "SUBMISSION_ACCEPTED" || executionState === "FILL_REPORTED") && failureCode !== null) {
+        throw new TradingDomainError("trading_store_rejected", "Accepted execution cannot carry a rejection. Failing closed.");
+      }
+      if ((executionState === "SUBMISSION_REJECTED" || executionState === "SUBMISSION_UNKNOWN") && failureCode === null) {
+        throw new TradingDomainError("trading_store_rejected", "Execution receipt failure was rejected. Failing closed.");
       }
       const environment = tradingEnvironmentSchema.safeParse(input.environment);
       if (!environment.success) {
@@ -446,6 +502,7 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
           instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
           risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+          execution_state, reconciliation_state,
           proposal_binding_hash, domain_status, failure_code, started_at, completed_at
         FROM trading_occurrences
         WHERE occurrence_id = ?
@@ -461,6 +518,7 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
       }
       agree(current.execution_request_id, executionRequestId);
       agree(current.failure_code, failureCode);
+      agree(current.execution_state, executionState);
       const nextStatus = input.domainStatus === "submitted_unknown"
         && current.domain_status === "turn_not_started"
         ? "submitted_unknown"
@@ -470,6 +528,7 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
         const result = db.prepare(`
           UPDATE trading_occurrences
           SET execution_request_id = COALESCE(execution_request_id, ?),
+              execution_state = COALESCE(execution_state, ?),
               failure_code = COALESCE(failure_code, ?),
               domain_status = CASE
                 WHEN domain_status = 'turn_not_started' AND ? = 'submitted_unknown' THEN 'submitted_unknown'
@@ -480,15 +539,18 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
             AND environment = ?
             AND provider_turn_id IS NOT NULL
             AND (execution_request_id IS NULL OR execution_request_id = ?)
+            AND (execution_state IS NULL OR execution_state = ?)
             AND (failure_code IS NULL OR ? IS NULL OR failure_code = ?)
         `).run(
           executionRequestId,
+          executionState,
           failureCode,
           input.domainStatus,
           input.occurrenceId,
           input.agentRunId,
           environment.data,
           executionRequestId,
+          executionState,
           failureCode,
           failureCode,
         );
@@ -510,6 +572,7 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
           occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
           instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
           risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+          execution_state, reconciliation_state,
           proposal_binding_hash, domain_status, failure_code, started_at, completed_at
         FROM trading_occurrences
         WHERE occurrence_id = ?
@@ -517,8 +580,15 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
       if (
         stored === undefined
         || stored.execution_request_id !== (current.execution_request_id ?? executionRequestId)
+        || stored.execution_state !== (current.execution_state ?? executionState)
         || stored.failure_code !== (current.failure_code ?? failureCode)
+        || stored.reconciliation_run_id !== current.reconciliation_run_id
+        || stored.reconciliation_state !== current.reconciliation_state
         || stored.domain_status !== nextStatus
+        || stored.decision_id !== current.decision_id
+        || stored.approval_id !== current.approval_id
+        || stored.proposal_binding_hash !== current.proposal_binding_hash
+        || stored.completed_at !== current.completed_at
         || stored.provider_turn_id !== current.provider_turn_id
         || stored.agent_run_id !== current.agent_run_id
         || stored.routine_id !== current.routine_id
@@ -526,6 +596,153 @@ export function createOccurrenceRepository(db: DatabaseSync, environment: Tradin
         || stored.thread_id !== current.thread_id
       ) {
         throw new TradingDomainError("immutable_revision", "Execution receipt already differs. Failing closed.");
+      }
+      return seal(fromRow(stored));
+    },
+    attachReconciliationReceipt(input) {
+      assertNoSecretFields(input, "trading occurrence");
+      if (input === null || typeof input !== "object" || Array.isArray(input)) {
+        throw new TradingDomainError("trading_store_rejected", "Reconciliation receipt was rejected. Failing closed.");
+      }
+      for (const key of Object.keys(input)) {
+        if (!RECONCILIATION_KEYS.has(key)) {
+          throw new TradingDomainError("trading_store_rejected", "Reconciliation receipt contains an unsupported field. Failing closed.");
+        }
+      }
+      const executionRequestId = nullableReference(input.executionRequestId, "Execution request id");
+      const reconciliationRunId = nullableReference(input.reconciliationRunId, "Reconciliation run id");
+      const reconciliationState = parseReconciliationState(input.reconciliationState);
+      if (
+        executionRequestId === null
+        || reconciliationRunId === null
+        || !recordIdSchema.safeParse(input.occurrenceId).success
+        || !recordIdSchema.safeParse(input.agentRunId).success
+        || !utcTimestampSchema.safeParse(input.reconciledAt).success
+      ) {
+        throw new TradingDomainError("trading_store_rejected", "Reconciliation receipt identity was rejected. Failing closed.");
+      }
+      const environment = tradingEnvironmentSchema.safeParse(input.environment);
+      if (!environment.success) {
+        throw new TradingDomainError("trading_store_rejected", "Reconciliation receipt environment was rejected. Failing closed.");
+      }
+      const current = db.prepare(`
+        SELECT
+          occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
+          instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
+          risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+          execution_state, reconciliation_state,
+          proposal_binding_hash, domain_status, failure_code, started_at, completed_at
+        FROM trading_occurrences
+        WHERE occurrence_id = ?
+      `).get(input.occurrenceId) as OccurrenceRow | undefined;
+      if (current === undefined || current.provider_turn_id === null || current.execution_request_id === null || current.execution_state === null) {
+        throw new TradingDomainError("trading_store_rejected", "Reconciliation receipt matched no submitted occurrence. Failing closed.");
+      }
+      if (current.execution_state === "NOT_SUBMITTED" || current.execution_request_id !== executionRequestId) {
+        throw new TradingDomainError("trading_store_rejected", "Reconciliation receipt does not match the submission. Failing closed.");
+      }
+      if (current.agent_run_id !== input.agentRunId) {
+        throw new TradingDomainError("agent_run_mismatch", "Reconciliation receipt agent run does not match. Failing closed.");
+      }
+      if (current.environment !== environment.data) {
+        throw new TradingDomainError("trading_store_rejected", "Reconciliation receipt environment does not match. Failing closed.");
+      }
+      agreeReconciliation(current.reconciliation_run_id, current.reconciliation_state, reconciliationRunId, reconciliationState);
+      const nextStatus = reconciliationDisplay(current.domain_status, reconciliationState);
+      const nextCompleted = reconciliationState === "UNKNOWN"
+        ? current.completed_at
+        : current.completed_at ?? input.reconciledAt;
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const result = db.prepare(`
+          UPDATE trading_occurrences
+          SET reconciliation_run_id = ?,
+              reconciliation_state = ?,
+              domain_status = CASE
+                WHEN ? = 'UNKNOWN' THEN domain_status
+                WHEN ? = 'RECONCILED' AND domain_status IN ('turn_not_started', 'submitted_unknown') THEN 'reconciled'
+                WHEN ? = 'DEGRADED' AND domain_status IN ('turn_not_started', 'submitted_unknown') THEN 'degraded'
+                WHEN ? = 'DESYNCED' AND domain_status IN ('turn_not_started', 'submitted_unknown') THEN 'desynced'
+                ELSE domain_status
+              END,
+              completed_at = CASE
+                WHEN ? = 'UNKNOWN' THEN completed_at
+                WHEN completed_at IS NULL THEN ?
+                ELSE completed_at
+              END
+          WHERE occurrence_id = ?
+            AND agent_run_id = ?
+            AND environment = ?
+            AND provider_turn_id IS NOT NULL
+            AND execution_request_id = ?
+            AND execution_state = ?
+            AND (
+              (reconciliation_run_id IS NULL AND reconciliation_state IS NULL)
+              OR (reconciliation_run_id = ? AND reconciliation_state = ?)
+              OR reconciliation_state = 'UNKNOWN'
+            )
+        `).run(
+          reconciliationRunId,
+          reconciliationState,
+          reconciliationState,
+          reconciliationState,
+          reconciliationState,
+          reconciliationState,
+          reconciliationState,
+          input.reconciledAt,
+          input.occurrenceId,
+          input.agentRunId,
+          environment.data,
+          executionRequestId,
+          current.execution_state,
+          reconciliationRunId,
+          reconciliationState,
+        );
+        if (result.changes !== 1) {
+          throw new TradingDomainError("trading_store_rejected", "Reconciliation receipt was rejected. Failing closed.");
+        }
+        db.exec("COMMIT");
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          // The occurrence transaction is already closed.
+        }
+        if (error instanceof TradingDomainError) throw error;
+        throw new TradingDomainError("trading_store_rejected", "Reconciliation receipt was rejected. Failing closed.");
+      }
+      const stored = db.prepare(`
+        SELECT
+          occurrence_id, routine_id, routine_run_id, thread_id, provider_turn_id, agent_run_id,
+          instrument, environment, provenance, snapshot_id, decision_id, order_intent_id,
+          risk_decision_id, policy_decision_id, approval_id, execution_request_id, reconciliation_run_id,
+          execution_state, reconciliation_state,
+          proposal_binding_hash, domain_status, failure_code, started_at, completed_at
+        FROM trading_occurrences
+        WHERE occurrence_id = ?
+      `).get(input.occurrenceId) as OccurrenceRow | undefined;
+      if (
+        stored === undefined
+        || stored.reconciliation_run_id !== reconciliationRunId
+        || stored.reconciliation_state !== reconciliationState
+        || stored.domain_status !== nextStatus
+        || stored.completed_at !== nextCompleted
+        || stored.execution_request_id !== current.execution_request_id
+        || stored.execution_state !== current.execution_state
+        || stored.failure_code !== current.failure_code
+        || stored.decision_id !== current.decision_id
+        || stored.order_intent_id !== current.order_intent_id
+        || stored.risk_decision_id !== current.risk_decision_id
+        || stored.policy_decision_id !== current.policy_decision_id
+        || stored.approval_id !== current.approval_id
+        || stored.proposal_binding_hash !== current.proposal_binding_hash
+        || stored.provider_turn_id !== current.provider_turn_id
+        || stored.agent_run_id !== current.agent_run_id
+        || stored.routine_id !== current.routine_id
+        || stored.routine_run_id !== current.routine_run_id
+        || stored.thread_id !== current.thread_id
+      ) {
+        throw new TradingDomainError("immutable_revision", "Reconciliation receipt already differs. Failing closed.");
       }
       return seal(fromRow(stored));
     },
@@ -546,6 +763,37 @@ function nullableFailure(value: string | null): string | null {
     throw new TradingDomainError("trading_store_rejected", "Eligibility failure code was rejected. Failing closed.");
   }
   return value;
+}
+
+/** A concluded reconciliation stays. UNKNOWN may advance to a later run.
+ * The earlier run remains in reconciliation_runs. */
+function agreeReconciliation(
+  currentId: string | null,
+  currentState: string | null,
+  nextId: string,
+  nextState: string,
+): void {
+  if (currentId === null && currentState === null) return;
+  if (currentId === nextId && currentState === nextState) return;
+  if (currentState === "UNKNOWN" && currentId !== null && currentId !== nextId) return;
+  throw new TradingDomainError("immutable_revision", "Reconciliation correlation already differs. Failing closed.");
+}
+
+function reconciliationDisplay(current: string, state: ReconciliationState): string {
+  if (state === "UNKNOWN") return current;
+  if (current !== "turn_not_started" && current !== "submitted_unknown") return current;
+  if (state === "RECONCILED") return "reconciled";
+  if (state === "DEGRADED") return "degraded";
+  if (state === "DESYNCED") return "desynced";
+  return current;
+}
+
+function parseStoredExecutionState(value: string | null): ExecutionState | null {
+  if (value === null) return null;
+  if (!(EXECUTION_STATES as readonly string[]).includes(value)) {
+    throw new TradingDomainError("trading_store_rejected", "Execution state was rejected. Failing closed.");
+  }
+  return value as ExecutionState;
 }
 
 /** A null column may be filled once. A later null leaves the stored value.
@@ -596,6 +844,8 @@ function occurrenceFromInsert(input: RoutineOccurrenceInsert, storeEnvironment: 
     approvalId: null,
     executionRequestId: null,
     reconciliationRunId: null,
+    executionState: null,
+    reconciliationState: null,
     proposalBindingHash: null,
     domainStatus,
     failureCode: null,
@@ -626,6 +876,8 @@ function fromRow(row: OccurrenceRow): TradingOccurrence {
     approvalId: row.approval_id,
     executionRequestId: row.execution_request_id,
     reconciliationRunId: row.reconciliation_run_id,
+    executionState: parseStoredExecutionState(row.execution_state),
+    reconciliationState: row.reconciliation_state === null ? null : parseReconciliationState(row.reconciliation_state),
     proposalBindingHash: row.proposal_binding_hash,
     domainStatus: parseOccurrenceDomainStatus(row.domain_status),
     failureCode: row.failure_code,
